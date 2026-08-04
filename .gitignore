@@ -1,0 +1,14 @@
+node_modules
+.next
+.env
+.turso.env
+.turso-token
+.vercel-token
+.smaregi.env
+.line.env
+data/*.db
+tsconfig.tsbuildinfo
+
+.vercel
+
+.env*
