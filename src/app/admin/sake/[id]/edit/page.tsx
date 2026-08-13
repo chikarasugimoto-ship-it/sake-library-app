@@ -2,6 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import { isAdmin } from "@/lib/auth";
 import { get, SAKE_COLUMNS, type SakeRow } from "@/lib/db";
 import { toSake } from "@/lib/types";
+import { collectCupStats } from "@/lib/cups";
 import { EditSake } from "./EditSake";
 
 export const dynamic = "force-dynamic";
@@ -12,5 +13,8 @@ export default async function EditSakePage({ params }: { params: Promise<{ id: s
   const { id } = await params;
   const row = await get<SakeRow>(`SELECT ${SAKE_COLUMNS} FROM sakes WHERE id = ? AND archived = 0`, [Number(id)]);
   if (!row) notFound();
-  return <EditSake sake={toSake(row)} />;
+  // 注文実績からの杯数（90mlグラス）。発注判断の材料として編集画面にも出す
+  const stats = await collectCupStats();
+  const c = stats.get(Number(id));
+  return <EditSake sake={toSake(row)} cups={c ? { total: c.total, d30: c.d30 } : { total: 0, d30: 0 }} />;
 }

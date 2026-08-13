@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import type { Sake } from "@/lib/types";
-import { digestDays, photoUrl } from "@/lib/types";
+import { digestDays, daysSinceDelivery, fmtMD, missingInfo, photoUrl } from "@/lib/types";
 import { resizeForAI, buildDisplayPhoto, reprocessToGodBg, type Bbox } from "@/lib/photo";
 import { rarityFor } from "@/lib/sakegami";
 import { PasswordChange } from "./PasswordChange";
@@ -18,8 +18,36 @@ const STATUS_LABELS: { value: Sake["status"]; label: string; activeClass: string
   { value: "soldout", label: "売切", activeClass: "bg-[#80868c] text-white" },
 ];
 
-export function StockBoard({ initialSakes, owner = false }: { initialSakes: Sake[]; owner?: boolean }) {
+// 重複判定のキー。銘柄名＋サブ名＋グレード＋容量が全部同じなら「同じ商品を二重登録した疑い」。
+// （同じ銘柄でもグレード違い・容量違いは別商品なので重複扱いにしない）
+function dupKey(s: Sake): string {
+  const norm = (v: string | null | undefined) => (v || "").replace(/\s+/g, "").normalize("NFKC");
+  return [norm(s.brand), norm(s.subName), norm(s.grade), s.volume ?? ""].join("|");
+}
+
+export function StockBoard({
+  initialSakes,
+  owner = false,
+  godReadyIds = [],
+  cups = {},
+}: {
+  initialSakes: Sake[];
+  owner?: boolean;
+  godReadyIds?: number[];
+  cups?: Record<number, { total: number; d30: number }>; // 注文実績からの杯数（90mlグラス）
+}) {
   const [sakes, setSakes] = useState(initialSakes);
+  const godReady = new Set(godReadyIds);
+  // 重複の疑い（現役一覧の中で同一キーが2件以上）
+  const dupCounts = new Map<string, number>();
+  for (const s of sakes) dupCounts.set(dupKey(s), (dupCounts.get(dupKey(s)) || 0) + 1);
+  const isDup = (s: Sake) => (dupCounts.get(dupKey(s)) || 0) >= 2;
+  const issueStats = {
+    noGod: sakes.filter((s) => !godReady.has(s.id)).length,
+    // 情報不足＝必須5項目（銘柄・酒蔵・都道府県・特定名称・価格）のどれかが空（価格未設定もここに統合）
+    noInfo: sakes.filter((s) => missingInfo(s).length > 0).length,
+    dup: sakes.filter(isDup).length,
+  };
   const dragId = useRef<number | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
@@ -209,20 +237,36 @@ export function StockBoard({ initialSakes, owner = false }: { initialSakes: Sake
       return n;
     });
   }
-  async function saveStock(s: Sake) {
+  // 保存前のインライン確認（2026-08-14 修正）。
+  // 従来の window.confirm は LINE内ブラウザ/PWA でブロックされると「押しても何も起きない」ため、
+  // 画面内の確認UI（OK/やめる）に置き換えた＝どの環境でも必ず確認が出る。
+  const [confirmSave, setConfirmSave] = useState<{ id: number; msg: string } | null>(null);
+
+  function askSaveStock(s: Sake) {
     const next = stockDraft[s.id];
-    if (next == null || next === s.stockCount || stockBusy) return;
+    if (next == null || next === s.stockCount || stockBusy != null) return;
     // 管理開始（—→数値）は「これから自動売切の対象になる」と明記して確認（2026-07-24の“勝手に売切”対策）
     const head =
       s.stockCount == null
-        ? `「${s.brand}」の残数管理を始めます。\n残数を ${next} にしてよろしいですか？\n（注文ごとに減り、0で自動的に売切になります）`
-        : `「${s.brand}」の残数を ${s.stockCount} → ${next} に変更します。よろしいですか？`;
-    const tail = next === 0 ? "\n\n※0にすると売切になります。" : "";
-    if (!confirm(head + tail)) return;
+        ? `「${s.brand}」の残数管理を始めます。残数を ${next} にします（注文ごとに減り、0で自動的に売切）。`
+        : `「${s.brand}」の残数を ${s.stockCount} → ${next} に変更します。`;
+    const tail = next === 0 ? " ※0にすると売切になります。" : "";
+    setConfirmSave({ id: s.id, msg: head + tail });
+  }
+
+  async function doSaveStock(s: Sake) {
+    const next = stockDraft[s.id];
+    setConfirmSave(null);
+    if (next == null || stockBusy != null) return;
     setStockBusy(s.id);
-    await setStock(s.id, next);
-    cancelDraft(s.id);
-    setStockBusy(null);
+    try {
+      await setStock(s.id, next);
+      cancelDraft(s.id);
+    } finally {
+      // 通信エラー等で例外が出ても必ずロック解除する。
+      // （従来はここが解除されず、1回の失敗で以後すべての保存ボタンが無反応になるバグがあった）
+      setStockBusy(null);
+    }
   }
 
   // 残数の保存（0で自動売切、1以上で提供中に戻す。next=null で管理しない）
@@ -235,12 +279,16 @@ export function StockBoard({ initialSakes, owner = false }: { initialSakes: Sake
         return { ...s, stockCount: next, status };
       })
     );
-    const res = await fetch(`/api/admin/sakes/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stock: next }),
-    });
-    if (!res.ok) setSakes(prev); // 失敗時は戻す
+    try {
+      const res = await fetch(`/api/admin/sakes/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stock: next }),
+      });
+      if (!res.ok) setSakes(prev); // 失敗時は戻す
+    } catch {
+      setSakes(prev); // 通信エラーでも戻す（例外を外に漏らさない）
+    }
   }
 
   // 初心者おすすめ（客の一覧トップ「今日の3本」に出す）
@@ -376,6 +424,12 @@ export function StockBoard({ initialSakes, owner = false }: { initialSakes: Sake
         {insight && (
           <div className="mt-3">
             {insight.summary && <p className="text-[13px] font-bold text-moss-deep">{insight.summary}</p>}
+            {/* 質重視：確信のあるときだけ提案が出る。無い時は正直に「提案なし」（無理にひねり出さない） */}
+            {insight.suggestions.length === 0 && (
+              <p className="mt-2 rounded-xl bg-paper px-3.5 py-2.5 text-[12px] text-ink-soft">
+                今回は提案なし（データ蓄積中）。注文が増えるほど、確信のある提案だけが出るようになります。
+              </p>
+            )}
             <div className="mt-2 space-y-2">
               {insight.suggestions.map((s, i) => (
                 <div key={i} className="rounded-xl bg-paper px-3.5 py-2.5">
@@ -389,6 +443,30 @@ export function StockBoard({ initialSakes, owner = false }: { initialSakes: Sake
       </div>
 
       <input ref={photoRef} type="file" accept="image/*" hidden onChange={onPhotoFile} />
+
+      {/* 要対応サマリー（酒神未生成・情報不足・重複疑い）。0件なら出さない */}
+      {(issueStats.noGod > 0 || issueStats.noInfo > 0 || issueStats.dup > 0) && (
+        <div className="mx-6 mb-3 rounded-2xl border border-[#e6c98a] bg-[#fdf6e7] px-4 py-3">
+          <p className="text-[12px] font-bold text-[#8a6414]">⚠️ 要チェック</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {issueStats.noGod > 0 && (
+              <Link href="/admin/sakegami" className="rounded-full bg-[#8a5fbf] px-2.5 py-1 text-[11px] font-bold text-white">
+                🐉 酒神未生成 {issueStats.noGod}件 → 生成へ
+              </Link>
+            )}
+            {issueStats.noInfo > 0 && (
+              <span className="rounded-full bg-[#b3261e] px-2.5 py-1 text-[11px] font-bold text-white">
+                📝 情報不足 {issueStats.noInfo}件（✎で追記。銘柄・酒蔵・県・特定名称・価格は必須）
+              </span>
+            )}
+            {issueStats.dup > 0 && (
+              <span className="rounded-full bg-[#b45309] px-2.5 py-1 text-[11px] font-bold text-white">
+                👯 重複の疑い {issueStats.dup}件（不要なら🗑）
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {sakes.some((s) => s.status === "soldout") && (
         <div className="mx-6 mb-2">
@@ -442,7 +520,46 @@ export function StockBoard({ initialSakes, owner = false }: { initialSakes: Sake
                   <span className="ml-1.5 rounded bg-[#80868c] px-1.5 py-0.5 align-middle text-[9.5px] font-bold text-white">売切にしました</span>
                 )}
               </p>
-              <p className="text-[11px] text-ink-soft">{s.price != null ? `¥${s.price.toLocaleString()}` : "—"}</p>
+              <p className="text-[11px] text-ink-soft">
+                {s.price != null ? `¥${s.price.toLocaleString()}` : "¥—"}
+                {s.bottleSize && <span className="ml-1 text-[10px]">({s.bottleSize})</span>}
+              </p>
+              {/* 納品日（登録日）と杯数（注文実績・90mlグラス）＝発注判断の材料 */}
+              {(s.deliveredAt || cups[s.id]) && (
+                <p className="mt-0.5 text-[10px] text-ink-soft">
+                  {s.deliveredAt && (
+                    <>
+                      📦 {fmtMD(s.deliveredAt)}納品
+                      {s.status !== "soldout" &&
+                        (() => {
+                          const d = daysSinceDelivery(s.deliveredAt, Date.now());
+                          return d != null ? `・${d === 0 ? "本日" : `${d}日目`}` : "";
+                        })()}
+                    </>
+                  )}
+                  {cups[s.id] && (
+                    <span className="ml-1.5">
+                      🍶 30日{cups[s.id].d30}杯・累計{cups[s.id].total}杯
+                    </span>
+                  )}
+                </p>
+              )}
+              {/* ぱっと見で分かる警告バッジ（酒神未生成・情報不足・重複疑い） */}
+              {(!godReady.has(s.id) || missingInfo(s).length > 0 || isDup(s)) && (
+                <p className="mt-0.5 flex flex-wrap gap-1">
+                  {!godReady.has(s.id) && (
+                    <span className="rounded bg-[#f0e9fa] px-1.5 py-0.5 text-[9.5px] font-bold text-[#6a4a99]">🐉 酒神未生成</span>
+                  )}
+                  {missingInfo(s).length > 0 && (
+                    <span className="rounded bg-[#fdecea] px-1.5 py-0.5 text-[9.5px] font-bold text-[#b3261e]">
+                      📝 {missingInfo(s).join("・")}が未記載
+                    </span>
+                  )}
+                  {isDup(s) && (
+                    <span className="rounded bg-[#fbe9dd] px-1.5 py-0.5 text-[9.5px] font-bold text-[#b45309]">👯 重複の疑い</span>
+                  )}
+                </p>
+              )}
               {s.status === "soldout" && digestDays(s.deliveredAt, s.soldoutAt) != null && (
                 <p className="mt-0.5 text-[10.5px] font-bold text-moss-deep">
                   🍶 {digestDays(s.deliveredAt, s.soldoutAt) === 0 ? "当日完売" : `${digestDays(s.deliveredAt, s.soldoutAt)}日で完売`}
@@ -490,14 +607,17 @@ export function StockBoard({ initialSakes, owner = false }: { initialSakes: Sake
                 {isDirty(s) && (
                   <>
                     <button
-                      onClick={() => void saveStock(s)}
+                      onClick={() => askSaveStock(s)}
                       disabled={stockBusy === s.id}
                       className="ml-0.5 rounded-full bg-moss-deep px-2.5 py-1 text-[11px] font-bold text-white active:scale-95 disabled:opacity-50"
                     >
                       {stockBusy === s.id ? "保存中…" : "保存"}
                     </button>
                     <button
-                      onClick={() => cancelDraft(s.id)}
+                      onClick={() => {
+                        cancelDraft(s.id);
+                        if (confirmSave?.id === s.id) setConfirmSave(null);
+                      }}
                       className="rounded-full border border-hairline px-2 py-1 text-[11px] font-bold text-ink-soft active:scale-95"
                     >
                       やめる
@@ -505,6 +625,26 @@ export function StockBoard({ initialSakes, owner = false }: { initialSakes: Sake
                   </>
                 )}
               </div>
+              {/* インライン確認（window.confirmの代わり・どの環境でも必ず出る） */}
+              {confirmSave?.id === s.id && (
+                <div className="mt-1 max-w-[240px] rounded-xl border border-[#b45309]/40 bg-[#fdf6e7] p-2">
+                  <p className="text-[11px] leading-snug text-[#8a6414]">{confirmSave.msg}</p>
+                  <div className="mt-1.5 flex justify-end gap-1.5">
+                    <button
+                      onClick={() => setConfirmSave(null)}
+                      className="rounded-full border border-hairline bg-card px-2.5 py-1 text-[11px] font-bold text-ink-soft active:scale-95"
+                    >
+                      やめる
+                    </button>
+                    <button
+                      onClick={() => void doSaveStock(s)}
+                      className="rounded-full bg-[#b45309] px-3 py-1 text-[11px] font-bold text-white active:scale-95"
+                    >
+                      OK・保存する
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
             <button
               onClick={() => setBeginner(s.id, !s.isBeginner)}

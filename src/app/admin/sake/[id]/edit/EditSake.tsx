@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { type Sake, photoUrl, isFreshSensitive } from "@/lib/types";
+import { type Sake, photoUrl, isFreshSensitive, missingInfo, bottleCups } from "@/lib/types";
 import { resizeForAI, buildDisplayPhoto, type Bbox } from "@/lib/photo";
 
 const CHART_AXES: { key: "sweet" | "acid" | "aroma" | "sharp"; label: string }[] = [
@@ -28,9 +28,11 @@ type Draft = {
   taste_chart: { sweet: number; acid: number; aroma: number; sharp: number };
   is_hidden: boolean;
   label_color: string;
+  delivered_at: string; // 'YYYY-MM-DD'（納品日・登録日）
+  bottle_size: string; // '1.8L' | '720ml'
 };
 
-export function EditSake({ sake }: { sake: Sake }) {
+export function EditSake({ sake, cups }: { sake: Sake; cups?: { total: number; d30: number } }) {
   const router = useRouter();
   const photoRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<Draft>({
@@ -47,6 +49,8 @@ export function EditSake({ sake }: { sake: Sake }) {
     taste_chart: sake.tasteChart,
     is_hidden: sake.isHidden,
     label_color: sake.labelColor,
+    delivered_at: (sake.deliveredAt || "").slice(0, 10),
+    bottle_size: sake.bottleSize || "1.8L",
   });
   const [stock, setStock] = useState<string>(sake.stockCount != null ? String(sake.stockCount) : "");
   // 鮮度枠の手動上書き（null=自動判定 / true=必ず出す / false=出さない）
@@ -167,8 +171,16 @@ export function EditSake({ sake }: { sake: Sake }) {
   }
 
   async function save() {
-    if (!draft.brand.trim()) {
-      setError("銘柄を入れてください");
+    // 必須5項目（銘柄・酒蔵・都道府県・特定名称・価格）。情報の無い銘柄を残さない（2026-08-14 オーナー指示）
+    const missing = missingInfo({
+      brand: draft.brand,
+      brewery: draft.brewery,
+      prefecture: draft.prefecture,
+      grade: draft.grade,
+      price: draft.price ? Number(draft.price) : null,
+    });
+    if (missing.length) {
+      setError(`必須項目が未入力です：${missing.join("・")}（AI補完も使えます）`);
       return;
     }
     setSaving(true);
@@ -191,6 +203,8 @@ export function EditSake({ sake }: { sake: Sake }) {
           season_label: draft.season_label,
           is_hidden: draft.is_hidden,
           label_color: draft.label_color,
+          delivered_at: draft.delivered_at,
+          bottle_size: draft.bottle_size,
         },
         stock: stock.trim() === "" ? null : Number(stock),
         fresh: freshFlag,
@@ -263,6 +277,42 @@ export function EditSake({ sake }: { sake: Sake }) {
             <button onClick={() => setStock("")} className="ml-auto text-[11px] text-ink-soft underline">管理しない</button>
           </div>
           <p className="mt-2 text-[11px] text-ink-soft">空欄＝残数で管理しない（状態ボタンのみ）。<b className="text-moss-deep">0で自動的に売切</b>、補充（1以上）で売切から提供中に戻ります。</p>
+          {cups && (
+            <p className="mt-2 rounded-xl bg-paper px-3 py-2 text-[11.5px] text-ink-soft">
+              🍶 注文実績：<b className="text-moss-deep">直近30日 {cups.d30}杯・累計 {cups.total}杯</b>（90mlグラス）
+            </p>
+          )}
+        </div>
+
+        {/* 納品日と瓶の容量（消化日数・杯数の目安＝発注判断の土台データ） */}
+        <div className="mb-3 rounded-2xl bg-card p-4 shadow-[0_1px_3px_rgba(38,40,43,0.06)]">
+          <p className="text-[11px] font-bold text-ink-soft">納品日（登録日）</p>
+          <input
+            type="date"
+            value={draft.delivered_at}
+            onChange={(e) => set({ delivered_at: e.target.value })}
+            className="mt-2 w-full rounded-xl bg-paper px-3 py-2 text-[13.5px] font-semibold outline-none"
+          />
+          <p className="mt-1.5 text-[11px] text-ink-soft">この日から「何日で完売したか（消化日数）」を数えます。再納品したら日付を入れ直してください。</p>
+          <p className="mt-3 text-[11px] font-bold text-ink-soft">瓶の容量</p>
+          <div className="mt-2 flex gap-2">
+            {(["1.8L", "720ml"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => set({ bottle_size: v })}
+                className={`flex-1 rounded-full border px-2 py-2 text-[12.5px] font-bold ${
+                  draft.bottle_size === v ? "border-moss-deep bg-moss-deep text-white" : "border-hairline bg-paper text-ink-soft"
+                }`}
+              >
+                {v}（約{bottleCups(v)}杯）
+              </button>
+            ))}
+            {!["1.8L", "720ml"].includes(draft.bottle_size) && (
+              <span className="flex items-center rounded-full border border-hairline px-3 text-[11.5px] text-ink-soft">現在: {draft.bottle_size}</span>
+            )}
+          </div>
+          <p className="mt-1.5 text-[10.5px] text-ink-soft">提供90mlグラス換算の目安（1.8L=約20杯・720ml=約8杯）。</p>
         </div>
 
         {/* 開けたて・お早めに枠（鮮度） */}
@@ -297,14 +347,15 @@ export function EditSake({ sake }: { sake: Sake }) {
 
         {/* 基本項目 */}
         <div className="space-y-px overflow-hidden rounded-2xl bg-card shadow-[0_1px_3px_rgba(38,40,43,0.06)]">
-          <Field label="銘柄" value={draft.brand} onChange={(v) => set({ brand: v })} />
+          <Field label="銘柄 ＊" value={draft.brand} onChange={(v) => set({ brand: v })} />
           <Field label="補足" value={draft.sub_name} onChange={(v) => set({ sub_name: v })} placeholder="例: 山田錦 無濾過生原酒" />
-          <Field label="酒蔵" value={draft.brewery} onChange={(v) => set({ brewery: v })} />
-          <Field label="都道府県" value={draft.prefecture} onChange={(v) => set({ prefecture: v })} />
-          <Field label="特定名称" value={draft.grade} onChange={(v) => set({ grade: v })} />
-          <Field label="価格 (円)" value={draft.price} onChange={(v) => set({ price: v.replace(/[^0-9]/g, "") })} inputMode="numeric" placeholder="未入力可" />
+          <Field label="酒蔵 ＊" value={draft.brewery} onChange={(v) => set({ brewery: v })} placeholder="必須" />
+          <Field label="都道府県 ＊" value={draft.prefecture} onChange={(v) => set({ prefecture: v })} placeholder="必須" />
+          <Field label="特定名称 ＊" value={draft.grade} onChange={(v) => set({ grade: v })} placeholder="必須" />
+          <Field label="価格 (円) ＊" value={draft.price} onChange={(v) => set({ price: v.replace(/[^0-9]/g, "") })} inputMode="numeric" placeholder="必須" />
           <Field label="季節ラベル" value={draft.season_label} onChange={(v) => set({ season_label: v })} placeholder="例: 夏限定" />
         </div>
+        <p className="mt-1.5 px-1 text-[10.5px] text-ink-soft">＊は必須（銘柄・酒蔵・都道府県・特定名称・価格）。空のままだと保存できません。</p>
 
         {/* AIで情報を入れ直す（ラベル誤認識の修正用） */}
         <div className="mt-3 rounded-2xl border border-moss/30 bg-[#eef3ef] p-4">

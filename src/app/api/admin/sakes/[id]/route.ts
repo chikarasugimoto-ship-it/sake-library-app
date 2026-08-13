@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { get, run, audit } from "@/lib/db";
 import { isAdmin } from "@/lib/auth";
 import { putImage, blobAvailable } from "@/lib/blob";
+import { recordSoldoutEvent } from "@/lib/notify";
 
 const STATUSES = ["available", "low", "soldout"] as const;
 
@@ -11,9 +12,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!(await isAdmin())) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { id } = await params;
   const sakeId = Number(id);
-  // 復元（archived=false）も扱うので、削除済みも含めて存在チェックする
-  const exists = await get<{ id: number }>("SELECT id FROM sakes WHERE id = ?", [sakeId]);
+  // 復元（archived=false）も扱うので、削除済みも含めて存在チェックする。
+  // status は「今回の操作で新たに売切になったか」の判定（売切通知の二重送信防止）に使う
+  const exists = await get<{ id: number; status: string }>("SELECT id, status FROM sakes WHERE id = ?", [sakeId]);
   if (!exists) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const wasSoldout = exists.status === "soldout";
+  let becameSoldout = false; // このリクエストで 提供中→売切 になったら true（最後に1回だけ通知）
 
   const b = (await req.json()) as {
     status?: string;
@@ -37,6 +41,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       season_label?: string;
       is_hidden?: boolean;
       label_color?: string;
+      delivered_at?: string; // 'YYYY-MM-DD'（納品日・登録日の手直し用。形式が正しい時だけ更新）
+      bottle_size?: string; // '1.8L' | '720ml'（瓶の容量。杯数の目安に使う）
     };
   };
 
@@ -65,6 +71,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         sakeId,
       ]
     );
+    // 納品日（登録日）の手直し。'YYYY-MM-DD' の時だけ更新（空・不正値では消さない＝データを守る）
+    if (d.delivered_at !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(String(d.delivered_at))) {
+      await run("UPDATE sakes SET delivered_at = ? WHERE id = ?", [`${d.delivered_at} 00:00:00`, sakeId]);
+    }
+    // 瓶の容量（1.8L=約20杯 / 720ml=約8杯・90ml提供の前提）。既知の値のみ受け付け
+    if (d.bottle_size !== undefined && ["1.8L", "720ml", "750ml"].includes(String(d.bottle_size))) {
+      await run("UPDATE sakes SET bottle_size = ? WHERE id = ?", [String(d.bottle_size), sakeId]);
+    }
     await audit("sake.edit", { id: sakeId });
   }
 
@@ -79,6 +93,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         // 売切＝その瓶は終わり。開栓日もリセット
         await run("UPDATE sakes SET status='soldout', opened_at='' WHERE id=?", [sakeId]);
         await run("UPDATE sakes SET soldout_at=datetime('now','localtime') WHERE id=? AND (soldout_at IS NULL OR soldout_at='')", [sakeId]);
+        if (!wasSoldout) becameSoldout = true; // 残数0で新たに売切になった＝日報の売切イベント対象
       } else {
         // 補充＝新しい瓶として鮮度クロックもリセット
         await run("UPDATE sakes SET status='available', soldout_at='', opened_at='' WHERE id=? AND status='soldout'", [sakeId]);
@@ -137,6 +152,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (b.status === "soldout") {
       await run("UPDATE sakes SET soldout_at = datetime('now','localtime') WHERE id = ? AND (soldout_at IS NULL OR soldout_at = '')", [sakeId]);
       await run("UPDATE sakes SET opened_at = '' WHERE id = ?", [sakeId]);
+      if (!wasSoldout) becameSoldout = true; // 手動で新たに売切にした＝日報の売切イベント対象
     } else {
       await run("UPDATE sakes SET soldout_at = '', opened_at = '' WHERE id = ?", [sakeId]);
     }
@@ -150,6 +166,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     await run("UPDATE sakes SET archived = 0, status = 'available', updated_at = datetime('now','localtime') WHERE id = ?", [sakeId]);
     await audit("sake.restore", { id: sakeId });
   }
+  // 提供中→売切 になった時だけ売切イベントを記録（soldout_at 設定後に呼ぶ。LINEは送らず夜の日報がまとめる）
+  if (becameSoldout) await recordSoldoutEvent(sakeId);
   // 客向けページ（キャッシュ）を即時更新
   revalidatePath("/");
   revalidatePath("/zukan");

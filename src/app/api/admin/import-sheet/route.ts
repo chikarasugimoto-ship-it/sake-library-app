@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     const price = r.cost ? computeSellPrice(r.cost, r.size, r.kubun, settings) : null;
     await run(
       `INSERT INTO sakes (store_id, brand, price, cost_excl_tax, bottle_size, kubun, season_label, is_hidden, delivered_at, imported, sort_order)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, 1, (SELECT COALESCE(MAX(sort_order),0)+1 FROM sakes))`,
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now','localtime')), 1, (SELECT COALESCE(MAX(sort_order),0)+1 FROM sakes))`,
       [r.brand, price, r.cost || null, r.size, r.kubun, r.season, r.hidden ? 1 : 0, r.delivered]
     );
     have.add(norm(r.brand));

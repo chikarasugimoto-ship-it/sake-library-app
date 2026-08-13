@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { resizeForAI, buildDisplayPhoto, type Bbox } from "@/lib/photo";
 import { rarityFor } from "@/lib/sakegami";
+import { missingInfo } from "@/lib/types";
 
 type Draft = {
   brand: string;
@@ -20,6 +21,7 @@ type Draft = {
   season_label: string;
   is_hidden: boolean;
   label_color: string;
+  bottle_size: string; // '1.8L' | '720ml'（既定は1.8L）
   confidence: number;
 };
 
@@ -37,6 +39,7 @@ const EMPTY: Draft = {
   season_label: "",
   is_hidden: false,
   label_color: "#1e3d2f",
+  bottle_size: "1.8L",
   confidence: 0,
 };
 
@@ -161,8 +164,16 @@ export default function NewSake() {
   }
 
   async function save() {
-    if (!draft.brand.trim()) {
-      setError("銘柄を入れてください");
+    // 必須5項目（銘柄・酒蔵・都道府県・特定名称・価格）。情報の無い銘柄を作らない（2026-08-14 オーナー指示）
+    const missing = missingInfo({
+      brand: draft.brand,
+      brewery: draft.brewery,
+      prefecture: draft.prefecture,
+      grade: draft.grade,
+      price: draft.price ? Number(draft.price) : null,
+    });
+    if (missing.length) {
+      setError(`必須項目が未入力です：${missing.join("・")}`);
       return;
     }
     setPhase("saving");
@@ -295,12 +306,33 @@ export default function NewSake() {
           </div>
 
           <div className="mt-3 space-y-px overflow-hidden rounded-2xl bg-card shadow-[0_1px_3px_rgba(38,40,43,0.06)]">
-            <Field label="銘柄" value={draft.brand} onChange={(v) => set({ brand: v })} placeholder="例: 而今" />
+            <Field label="銘柄 ＊" value={draft.brand} onChange={(v) => set({ brand: v })} placeholder="例: 而今（必須）" />
             <Field label="補足" value={draft.sub_name} onChange={(v) => set({ sub_name: v })} placeholder="例: 山田錦 無濾過生原酒" />
-            <Field label="酒蔵" value={draft.brewery} onChange={(v) => set({ brewery: v })} placeholder="例: 木屋正酒造" />
-            <Field label="都道府県" value={draft.prefecture} onChange={(v) => set({ prefecture: v })} placeholder="例: 三重県" />
-            <Field label="特定名称" value={draft.grade} onChange={(v) => set({ grade: v })} placeholder="例: 純米吟醸" />
-            <Field label="価格 (円)" value={draft.price} onChange={(v) => set({ price: v.replace(/[^0-9]/g, "") })} inputMode="numeric" placeholder="未入力可" />
+            <Field label="酒蔵 ＊" value={draft.brewery} onChange={(v) => set({ brewery: v })} placeholder="例: 木屋正酒造（必須）" />
+            <Field label="都道府県 ＊" value={draft.prefecture} onChange={(v) => set({ prefecture: v })} placeholder="例: 三重県（必須）" />
+            <Field label="特定名称 ＊" value={draft.grade} onChange={(v) => set({ grade: v })} placeholder="例: 純米吟醸（必須）" />
+            <Field label="価格 (円) ＊" value={draft.price} onChange={(v) => set({ price: v.replace(/[^0-9]/g, "") })} inputMode="numeric" placeholder="必須" />
+          </div>
+          <p className="mt-1.5 px-1 text-[10.5px] text-ink-soft">＊は必須（銘柄・酒蔵・都道府県・特定名称・価格）。情報が無い銘柄はお客様への説明も分析もできません。</p>
+
+          {/* 瓶の容量（90ml提供の杯数目安に使う。1.8L=約20杯・720ml=約8杯） */}
+          <div className="mt-3 rounded-2xl bg-card p-4 shadow-[0_1px_3px_rgba(38,40,43,0.06)]">
+            <p className="text-[11px] font-bold text-ink-soft">瓶の容量</p>
+            <div className="mt-2 flex gap-2">
+              {(["1.8L", "720ml"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => set({ bottle_size: v })}
+                  className={`flex-1 rounded-full border px-2 py-2 text-[12.5px] font-bold ${
+                    draft.bottle_size === v ? "border-moss-deep bg-moss-deep text-white" : "border-hairline bg-paper text-ink-soft"
+                  }`}
+                >
+                  {v}（約{v === "1.8L" ? 20 : 8}杯）
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[10.5px] text-ink-soft">提供90mlグラス換算の目安です。ふつうの一升瓶なら1.8LのままでOK。</p>
           </div>
 
           <div className="mt-3 rounded-2xl bg-card p-4 shadow-[0_1px_3px_rgba(38,40,43,0.06)]">
@@ -380,7 +412,7 @@ export default function NewSake() {
             </button>
           </div>
           <p className="mt-3 pb-6 text-center text-[11px] text-ink-soft">
-            {manual ? "銘柄だけでも登録できます（あとから編集可）" : "所要時間 約30秒"}
+            {manual ? "＊の5項目は必須です（わからない項目はAI補完も使えます・あとから編集可）" : "所要時間 約30秒"}
           </p>
         </div>
       )}

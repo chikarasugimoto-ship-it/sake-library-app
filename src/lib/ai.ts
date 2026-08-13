@@ -524,7 +524,16 @@ export type PurchaseData = {
   aiPrefs: { pref: string; count: number }[]; // AI相談で選ばれた好みチップの回数
   aiTexts: string[]; // AI相談の自由入力（最近のサンプル）
   aiPicked: { name: string; count: number }[]; // AIが薦めた回数
-  stock: { name: string; tasteTags: string[]; status: string }[]; // 現在の在庫
+  // 現在の在庫（品揃え×売れ行きのギャップ分析用に県・特定名称・価格・杯数も持つ）
+  stock: {
+    name: string;
+    tasteTags: string[];
+    status: string;
+    prefecture?: string;
+    grade?: string;
+    price?: number | null;
+    cups30?: number; // 直近30日の杯数（90mlグラス）
+  }[];
   soldoutSpeed: { name: string; days: number }[]; // 完売した銘柄の消化日数（速い順）
   slowMovers: { name: string; days: number }[]; // 在庫が長い銘柄（入荷からの経過日数・遅い順）
   days: number; // 集計対象の日数
@@ -541,10 +550,15 @@ export async function analyzePurchasing(d: PurchaseData): Promise<PurchaseInsigh
 - よく注文される銘柄＝補充候補。お客様の好み（チップ・自由文）に多いのに在庫が手薄な味の傾向＝仕入れ候補。AIがよく薦める＝人気傾向。
 - 売切が続く人気銘柄、逆にAI相談で求められているのに無い味（例:フルーティ希望が多いのに在庫が辛口ばかり）を指摘。
 - 消化日数：完売までが短い銘柄＝需要が高く品切れの機会損失が出やすい→優先的に補充/多めに仕入れ。入荷から日数が経っても在庫が残る銘柄＝動きが鈍い→追加仕入れは慎重に、味の傾向が外れている可能性。
-- データが少ない場合は断定せず「傾向の芽」として控えめに。具体的な銘柄名や味の方向で。
+- 【品揃え×売れ行きのギャップ】現在の品揃えの構成（都道府県・特定名称・価格帯・味わい傾向）と杯数実績を突き合わせ、ギャップを具体的に指摘する。例:「辛口系がよく出ているのに提供中は残り1銘柄」「純米大吟醸が人気だが高価格帯しかない」「◯◯県の銘柄が売れ筋なのに現在ゼロ」。
+- 【発注提案】上記ギャップ＋杯数＋完売スピードから「次に発注すべき銘柄・タイプ」を具体的に。銘柄名の指定が難しければ「◯◯系（特定名称/味わい）・価格帯◯円前後」のタイプ提案でよい。提供は90mlグラスで1.8L瓶=約20杯・720ml=約8杯。回転の速い銘柄は本数の目安（例:次回2本）も添える。
+- 【最重要・質＞量】提案は「データが揃って確信を持って言えるとき」だけ出すこと。毎回ひねり出さない。
+  - 提案を出す条件の目安: 杯数実績が十分ある（対象銘柄/カテゴリで2桁杯以上）、完売実績の裏付けがある、品揃えギャップが数字で明確、のいずれかを満たす。
+  - 条件を満たす確かな提案が無ければ suggestions は空配列 [] にし、summary に「今回は提案なし（データ蓄積中）」の旨を正直に書く。根拠のない一般論・水増し提案は禁止。
+  - 提案を出すときは detail に必ず数字の根拠を入れる（例:「◯◯が2日で完売・18杯」「辛口系30日42杯に対し提供中1銘柄」）。
 JSONのみ返す（前置き不要）:
-{"summary":"全体傾向のひとこと（60字以内）","suggestions":[{"title":"短い見出し","detail":"具体的な助言と理由（90字以内）"}]}
-suggestions は2〜5個。`;
+{"summary":"全体傾向のひとこと（60字以内）","suggestions":[{"title":"短い見出し","detail":"数字の根拠つきの具体的な助言（90字以内）"}]}
+suggestions は0〜5個（確信のあるものだけ）。`;
   const user = `【集計期間】直近${d.days}日
 【注文の多い銘柄】\n${fmt(d.orders)}
 【AI相談で選ばれた好み】\n${fmt(d.aiPrefs)}
@@ -552,7 +566,18 @@ suggestions は2〜5個。`;
 【AIが薦めた銘柄】\n${fmt(d.aiPicked)}
 【完売までの日数(速い＝人気)】\n${d.soldoutSpeed.length ? d.soldoutSpeed.map((x) => `・${x.name}：${x.days === 0 ? "当日" : x.days + "日"}で完売`).join("\n") : "（まだ完売データなし）"}
 【在庫が長い銘柄(入荷からの日数)】\n${d.slowMovers.length ? d.slowMovers.map((x) => `・${x.name}：入荷${x.days}日目`).join("\n") : "（なし）"}
-【現在の在庫】\n${fmt(d.stock)}`;
+【現在の品揃え（県/特定名称/価格/味/状態/30日杯数）】\n${
+    d.stock.length
+      ? d.stock
+          .map(
+            (x) =>
+              `・${x.name}（${[x.prefecture || "県不明", x.grade || "種類不明", x.price != null ? `¥${x.price}` : "価格未設定"].join("/")}・味:${
+                x.tasteTags.join("/") || "—"
+              }・${x.status}${x.cups30 != null ? `・30日${x.cups30}杯` : ""}）`
+          )
+          .join("\n")
+      : "（データなし）"
+  }`;
   const res = await client.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 1200,

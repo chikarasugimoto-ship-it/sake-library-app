@@ -6,6 +6,7 @@ import { rateLimit } from "@/lib/ratelimit";
 import { verifySession, MEMBER_COOKIE } from "@/lib/line";
 import { readGuest } from "@/lib/guest";
 import { issueRewards } from "@/lib/rewards";
+import { recordSoldoutEvent } from "@/lib/notify";
 import {
   smaregiConfigured,
   orderingEnabled,
@@ -251,10 +252,12 @@ export async function POST(req: NextRequest) {
           [o.quantity, o.sakeId]
         );
         // 売切＝その瓶は終わり。次の瓶に備えて開栓日もリセット（残数管理中の銘柄のみ到達しうる）
-        await run(
+        const soldRes = await run(
           "UPDATE sakes SET status='soldout', soldout_at=datetime('now','localtime'), opened_at='' WHERE id = ? AND stock_count = 0 AND status != 'soldout'",
           [o.sakeId]
         );
+        // 注文で残数0→自動売切になった瞬間だけ売切イベントを記録（夜のスマート日報がまとめて報告）
+        if (soldRes.rowsAffected > 0) await recordSoldoutEvent(o.sakeId);
         changed.push(o.sakeId);
       } catch {
         // 在庫更新の失敗で注文自体は止めない

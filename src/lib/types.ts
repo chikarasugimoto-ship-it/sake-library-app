@@ -28,6 +28,7 @@ export type Sake = {
   freshSensitive: boolean; // 生酒など早めに飲みたい酒か（手動上書きがあれば優先・無ければラベルから自動判定）
   freshFlag: number | null; // 鮮度枠の手動上書き（null=自動 / 1=必ず出す / 0=出さない）。編集画面の初期値に使う
   openedAt: string; // 開栓日時（最初の注文で記録・売切/補充でリセット。空＝未開栓/不明）
+  bottleSize: string; // 瓶の容量（'1.8L' | '720ml' 等。90ml提供の杯数目安に使う）
   en: SakeEn | null; // 英訳（AI生成・未生成は null。表示は en があれば英語、無ければ日本語）
 };
 
@@ -76,6 +77,38 @@ export function daysSinceDelivery(deliveredAt: string | undefined, now: number):
   n.setHours(0, 0, 0, 0);
   if (n.getTime() < d) return null;
   return Math.max(0, Math.round((n.getTime() - d) / 86_400_000));
+}
+
+// 'YYYY-MM-DD…' → 'M/D'（表示用の小ヘルパ。クライアント/サーバー両方で使う）
+export function fmtMD(ts: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ts || "");
+  if (!m) return "";
+  return `${Number(m[2])}/${Number(m[3])}`;
+}
+
+// 記載必須の5項目（2026-08-14 オーナー指示: 銘柄・酒蔵・都道府県・特定名称・価格）。
+// 欠けている項目の日本語ラベルを返す（空配列=情報OK）。登録/編集フォームの必須チェックと
+// 在庫ボードの「情報不足」警告の両方で使う。CSV取込・品書き一括登録は止めない（後から警告で気づく設計）。
+export function missingInfo(s: {
+  brand?: string;
+  brewery?: string;
+  prefecture?: string;
+  grade?: string;
+  price?: number | null;
+}): string[] {
+  const m: string[] = [];
+  if (!String(s.brand ?? "").trim()) m.push("銘柄");
+  if (!String(s.brewery ?? "").trim()) m.push("酒蔵");
+  if (!String(s.prefecture ?? "").trim()) m.push("都道府県");
+  if (!String(s.grade ?? "").trim()) m.push("特定名称");
+  if (s.price == null || Number(s.price) <= 0) m.push("価格");
+  return m;
+}
+
+// 瓶1本あたりの理論杯数（提供は90mlグラス前提）。1.8L=20杯・720ml/750ml=8杯。
+// 発注示唆（何本仕入れるか）と残数の目安に使う。
+export function bottleCups(bottleSize?: string): number {
+  return /7[25]0/.test(bottleSize || "") ? 8 : 20;
 }
 
 // プレミアム判定は価格で自動（運用ゼロ）。閾値は env で変更可
@@ -165,6 +198,7 @@ export function toSake(row: SakeRow): Sake {
         : isFreshSensitive({ grade: row.grade, subName: row.sub_name, brand: row.brand, tasteTags }),
     freshFlag: row.fresh_flag != null ? Number(row.fresh_flag) : null,
     openedAt: row.opened_at || "",
+    bottleSize: row.bottle_size || "1.8L",
     en: parseEn(row.i18n),
   };
 }

@@ -3,6 +3,7 @@ import { all, SAKE_COLUMNS, type SakeRow } from "@/lib/db";
 import { isAdmin } from "@/lib/auth";
 import { toSake, digestDays, daysSinceDelivery } from "@/lib/types";
 import { analyzePurchasing, aiAvailable, type PurchaseData } from "@/lib/ai";
+import { collectCupStats } from "@/lib/cups";
 
 const DAYS = 30;
 
@@ -69,7 +70,19 @@ export async function POST() {
     aiPrefs: [...prefCount.entries()].sort((a, b) => b[1] - a[1]).map(([pref, count]) => ({ pref, count })),
     aiTexts: texts,
     aiPicked: [...pickCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, count]) => ({ name: nameOf(id), count })),
-    stock: sakes.map((s) => ({ name: nameOfSake(s), tasteTags: s.tasteTags, status: s.status })),
+    stock: await (async () => {
+      // 品揃え×売れ行きのギャップ分析用：県・特定名称・価格・直近30日の杯数も渡す
+      const cups = await collectCupStats();
+      return sakes.map((s) => ({
+        name: nameOfSake(s),
+        tasteTags: s.tasteTags,
+        status: s.status,
+        prefecture: s.prefecture,
+        grade: s.grade,
+        price: s.price,
+        cups30: cups.get(s.id)?.d30 ?? 0,
+      }));
+    })(),
     soldoutSpeed,
     slowMovers,
   };

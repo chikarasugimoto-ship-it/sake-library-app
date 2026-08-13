@@ -31,6 +31,7 @@ type CreateBody = {
   label_color?: string;
   photo_base64?: string;
   photo_type?: string;
+  bottle_size?: string; // '1.8L' | '720ml'（未指定は1.8L）
 };
 
 export async function POST(req: NextRequest) {
@@ -49,8 +50,8 @@ export async function POST(req: NextRequest) {
     `INSERT INTO sakes
       (store_id, brand, sub_name, brewery, prefecture, grade, price, volume, description,
        taste_tags, pairings, taste_chart, season_label, is_hidden, photo, photo_type, label_color,
-       delivered_at, sort_order)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       bottle_size, delivered_at, sort_order)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
        datetime('now','localtime'), (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM sakes))`,
     [
       brand.slice(0, 60),

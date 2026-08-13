@@ -255,6 +255,11 @@ const MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS idx_god_owned_owner ON god_owned(owner_kind, owner_id)",
   "CREATE INDEX IF NOT EXISTS idx_reward_owner ON reward_grants(owner_kind, owner_id)",
   "CREATE INDEX IF NOT EXISTS idx_visits_owner ON visits(owner_kind, owner_id)",
+  // ===== 記録強化（2026-08-14）=====
+  // 納品日が空の既存銘柄は登録日時(created_at)で補完＝全銘柄で「いつ入ったか」を必ず持つ（冪等・2回目以降は対象0件）
+  "UPDATE sakes SET delivered_at = COALESCE(created_at, datetime('now','localtime')) WHERE delivered_at IS NULL OR delivered_at = ''",
+  // 杯数集計・日報の既読管理が audit_logs を action で引くための索引
+  "CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action, id)",
 ];
 
 async function init() {
@@ -301,10 +306,16 @@ export async function get<T = Record<string, unknown>>(sql: string, args: InArgs
   return rows[0] ?? null;
 }
 
-export async function run(sql: string, args: InArgs = []): Promise<{ lastInsertRowid: number | null }> {
+export async function run(
+  sql: string,
+  args: InArgs = []
+): Promise<{ lastInsertRowid: number | null; rowsAffected: number }> {
   await ready();
   const res = await getClient().execute({ sql, args });
-  return { lastInsertRowid: res.lastInsertRowid != null ? Number(res.lastInsertRowid) : null };
+  return {
+    lastInsertRowid: res.lastInsertRowid != null ? Number(res.lastInsertRowid) : null,
+    rowsAffected: Number(res.rowsAffected) || 0,
+  };
 }
 
 export async function audit(action: string, payload: unknown) {
@@ -346,7 +357,8 @@ export type SakeRow = {
   opened_at?: string;
   fresh_flag?: number | null;
   i18n?: string;
+  bottle_size?: string; // 瓶の容量（'1.8L' | '720ml' | '750ml'。90ml提供の杯数目安に使う）
 };
 
 export const SAKE_COLUMNS =
-  "id, brand, sub_name, brewery, prefecture, grade, price, volume, description, taste_tags, pairings, taste_chart, season_label, is_hidden, (photo IS NOT NULL) AS has_photo, photo_type, label_color, status, sort_order, updated_at, delivered_at, soldout_at, stock_count, is_beginner, opened_at, fresh_flag, i18n";
+  "id, brand, sub_name, brewery, prefecture, grade, price, volume, description, taste_tags, pairings, taste_chart, season_label, is_hidden, (photo IS NOT NULL) AS has_photo, photo_type, label_color, status, sort_order, updated_at, delivered_at, soldout_at, stock_count, is_beginner, opened_at, fresh_flag, i18n, bottle_size";
