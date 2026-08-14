@@ -12,6 +12,10 @@ import { digestLabel } from "./notify";
 //   3. 週間人気の首位交代
 //   4. 人気銘柄の残りわずか（発注タイミングの示唆）
 //   5. 品揃えギャップ（売れ筋の特定名称なのに提供中が手薄）
+//   6. フードの売切（2026-08-14 オーナー承認: すぎだまMOの /api/mo/soldout-today から
+//      「本日売切になった品名＋時刻」を取得して同じ1通に載せる。取得失敗時はこの
+//      セクションだけスキップ＝日本酒側の日報は止めない。日本酒0件でもフードが
+//      あれば送る＝両方0件の日だけ沈黙）
 // 同じ内容を毎日繰り返さないよう、送信済みキーを audit_logs('brief.sent') に残して重複を抑える。
 // 杯数は90mlグラス前提（1.8L=約20杯・720ml=約8杯）。
 // ============================================================================
@@ -33,8 +37,27 @@ export type BriefResult = {
   events: number; // イベント件数（0なら送らない）
   text: string; // LINE本文（events=0 なら空）
   keys: string[]; // 送信済み管理用のイベントキー
-  sections: { soldout: number; surge: number; rank: number; low: number; gap: number };
+  sections: { soldout: number; surge: number; rank: number; low: number; gap: number; food: number };
 };
+
+// --- フードの売切（すぎだまMO連携）---
+// MO側の公開読み取りAPI（品名＋時刻のみの低リスク情報。MOが酒コレ /api/sakes を
+// 無認証で読む既存パターンの逆方向）。URLは env で差し替え可能。
+type FoodSoldout = { id: number; name: string; at: string; restored: boolean; restoredAt: string | null };
+const MO_FOOD_SOLDOUT_URL =
+  process.env.MO_FOOD_SOLDOUT_URL || "https://sugidama-mo.vercel.app/api/mo/soldout-today?store=sugidama";
+
+async function fetchFoodSoldouts(): Promise<FoodSoldout[]> {
+  try {
+    const r = await fetch(MO_FOOD_SOLDOUT_URL, { cache: "no-store", signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return [];
+    const j = (await r.json().catch(() => null)) as { ok?: boolean; items?: FoodSoldout[] } | null;
+    if (!j?.ok || !Array.isArray(j.items)) return [];
+    return j.items.filter((it) => it && it.name && it.at).slice(0, 15);
+  } catch {
+    return []; // 取得失敗＝フードセクションだけスキップ（日本酒側の日報は止めない）
+  }
+}
 
 const nameOf = (s: { brand: string; grade: string }) => [s.brand, s.grade].filter(Boolean).join(" ");
 
@@ -70,13 +93,14 @@ async function todaysSoldouts(): Promise<{ ev: SoldoutEvent; key: string }[]> {
 }
 
 export async function buildDailyBrief(): Promise<BriefResult> {
-  const [sent, soldouts, cups, sakes] = await Promise.all([
+  const [sent, soldouts, cups, sakes, foods] = await Promise.all([
     sentKeys(),
     todaysSoldouts(),
     collectCupStats(),
     all<SakeLite>(
       "SELECT id, brand, grade, prefecture, status, stock_count, delivered_at, bottle_size FROM sakes WHERE archived = 0"
     ),
+    fetchFoodSoldouts(),
   ]);
   const stat = (id: number): CupStat => cups.get(id) ?? { total: 0, d30: 0, d7: 0, prev7: 0 };
 
@@ -167,7 +191,18 @@ export async function buildDailyBrief(): Promise<BriefResult> {
     }
   }
 
-  const events = secSoldout.length + secMove.length + secLow.length + secGap.length;
+  // --- 6. フードの売切（すぎだまMOから。当日単位のキーで同日再実行の重複だけ防ぐ）---
+  const secFood: string[] = [];
+  const todayYmd = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date()); // YYYY-MM-DD
+  for (const f of foods) {
+    const key = `food:${f.id}:${todayYmd}`;
+    if (sent.has(key)) continue;
+    secFood.push(f.restored && f.restoredAt ? `・${f.name}（${f.at}売切 → ${f.restoredAt}に復活）` : `・${f.name}（${f.at}売切）`);
+    keys.push(key);
+  }
+
+  // 送信判定: 日本酒イベント0件でもフード売切があれば送る（両方0件の日だけ沈黙）
+  const events = secSoldout.length + secMove.length + secLow.length + secGap.length + secFood.length;
   let text = "";
   if (events > 0) {
     const today = new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" }).format(new Date());
@@ -176,6 +211,7 @@ export async function buildDailyBrief(): Promise<BriefResult> {
     if (secMove.length) parts.push("", "■ 動きの変化", ...secMove);
     if (secLow.length) parts.push("", "■ 残りわずか", ...secLow);
     if (secGap.length) parts.push("", "■ 品揃えの示唆", ...secGap);
+    if (secFood.length) parts.push("", "■ 🍜 フードの売切", ...secFood);
     text = parts.join("\n");
   }
 
@@ -183,7 +219,7 @@ export async function buildDailyBrief(): Promise<BriefResult> {
     events,
     text,
     keys,
-    sections: { soldout: secSoldout.length, surge: secMove.filter((l) => l.includes("🔥")).length, rank: secMove.filter((l) => l.includes("👑")).length, low: secLow.length, gap: secGap.length },
+    sections: { soldout: secSoldout.length, surge: secMove.filter((l) => l.includes("🔥")).length, rank: secMove.filter((l) => l.includes("👑")).length, low: secLow.length, gap: secGap.length, food: secFood.length },
   };
 }
 
