@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
       grade: s.grade,
       price: s.price,
       volume: s.volume,
+      kanOk: s.kanOk, // 熱燗可（MOのサイズ選択がライブ取得で参照。欠落時はMO側でfalse扱い）
       status: s.status,
       updatedAt: s.updatedAt,
       rarity: row.god_rarity || "",

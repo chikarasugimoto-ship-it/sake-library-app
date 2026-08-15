@@ -29,6 +29,7 @@ export type Sake = {
   freshFlag: number | null; // 鮮度枠の手動上書き（null=自動 / 1=必ず出す / 0=出さない）。編集画面の初期値に使う
   openedAt: string; // 開栓日時（最初の注文で記録・売切/補充でリセット。空＝未開栓/不明）
   bottleSize: string; // 瓶の容量（'1.8L' | '720ml' 等。90ml提供の杯数目安に使う）
+  kanOk: boolean; // 熱燗可（1合徳利のみ・在庫ボードでトグル）。false=熱燗の選択肢を出さない
   en: SakeEn | null; // 英訳（AI生成・未生成は null。表示は en があれば英語、無ければ日本語）
 };
 
@@ -199,6 +200,7 @@ export function toSake(row: SakeRow): Sake {
     freshFlag: row.fresh_flag != null ? Number(row.fresh_flag) : null,
     openedAt: row.opened_at || "",
     bottleSize: row.bottle_size || "1.8L",
+    kanOk: !!row.kan_ok,
     en: parseEn(row.i18n),
   };
 }

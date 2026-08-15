@@ -19,6 +19,7 @@ import {
   type OrderItemInput,
   type TableUse,
 } from "@/lib/smaregi";
+import { type SakeSize, normalizeSize, priceFor, withSizeSuffix, CUPS } from "@/lib/sizes";
 
 const TABLE_COOKIE = "sksl_table";
 const TUSE_COOKIE = "sksl_tuse"; // 注文中の卓セッション(table_use)にひもづけ。会計後の再注文・退店者の誤注文を防ぐ
@@ -44,7 +45,7 @@ async function learnTableIds(uses: TableUse[]) {
   }
 }
 
-type SakeRow = { id: number; brand: string; grade: string; price: number | null; smaregi_product_id: string; status: string };
+type SakeRow = { id: number; brand: string; grade: string; price: number | null; smaregi_product_id: string; status: string; kan_ok: number | null };
 
 export async function POST(req: NextRequest) {
   if (!orderingEnabled()) return NextResponse.json({ error: "ordering_disabled" }, { status: 503 });
@@ -58,7 +59,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "rate_limited", message: "少し時間をおいてお試しください" }, { status: 429 });
   }
 
-  const body = (await req.json().catch(() => null)) as { items?: { sakeId: number; quantity: number }[] } | null;
+  // size（グラス/1合/熱燗）はオプション。不正・未指定は "glass"＝旧クライアント（キャッシュ済みページ）互換
+  const body = (await req.json().catch(() => null)) as { items?: { sakeId: number; quantity: number; size?: string }[] } | null;
   const reqItems = (body?.items || []).filter((i) => i && i.sakeId && i.quantity > 0);
   if (!reqItems.length) return NextResponse.json({ error: "empty_cart" }, { status: 400 });
 
@@ -66,7 +68,7 @@ export async function POST(req: NextRequest) {
   const ids = reqItems.map((i) => Number(i.sakeId));
   const placeholders = ids.map(() => "?").join(",");
   const rows = await all<SakeRow>(
-    `SELECT id, brand, grade, price, smaregi_product_id, status FROM sakes WHERE id IN (${placeholders}) AND archived = 0`,
+    `SELECT id, brand, grade, price, smaregi_product_id, status, kan_ok FROM sakes WHERE id IN (${placeholders}) AND archived = 0`,
     ids
   );
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -83,11 +85,13 @@ export async function POST(req: NextRequest) {
   const sakeMenu = resolveSakeMenu(menus);
 
   const items: OrderItemInput[] = [];
-  // S0: 集計用に price/brand も残す（客単価・プレミア率を audit_logs から後で出せるように）
-  const ordered: { sakeId: number; quantity: number; price: number; brand: string }[] = [];
-  const unresolved: { sakeId: number; brand?: string }[] = [];   // 見つからない/価格未設定/メニュー未設定
+  // S0: 集計用に price/brand も残す（客単価・プレミア率を audit_logs から後で出せるように）。
+  // 2026-08-16 サイズ対応: size と cups（90ml換算杯数）も記録。price は「サイズ後の単価」（1合・熱燗=グラス×2）
+  const ordered: { sakeId: number; quantity: number; size: SakeSize; cups: number; price: number; brand: string }[] = [];
+  const unresolved: { sakeId: number; brand?: string }[] = [];   // 見つからない/価格未設定/メニュー未設定/熱燗不可
   for (const it of reqItems) {
     const s = byId.get(Number(it.sakeId));
+    const size = normalizeSize(it.size); // 不正・未指定は glass（旧クライアント互換）
     if (!s || !s.price || s.price <= 0) {
       unresolved.push({ sakeId: it.sakeId, brand: s?.brand });
       continue;
@@ -98,22 +102,30 @@ export async function POST(req: NextRequest) {
       unresolved.push({ sakeId: it.sakeId, brand: s.brand });
       continue;
     }
+    // 熱燗はサーバーで最終検証（kan_ok を営業中にOFFにされたケース）。NGはカートに残してスタッフ対応へ
+    if (size === "kan" && !s.kan_ok) {
+      unresolved.push({ sakeId: it.sakeId, brand: s.brand });
+      continue;
+    }
+    // サイズ後の単価と表示名（「銘柄名（1合）」「銘柄名（1合・熱燗）」。suffixはslice後に付与＝欠けない）
+    const unitPrice = priceFor(s.price, size);
+    const name = withSizeSuffix(sakeOrderName(s), size);
     const own = resolveMenuFor(menus, { smaregiProductId: s.smaregi_product_id, brand: s.brand, grade: s.grade });
     if (own) {
       // 専用メニュー＝別商品。会計で同額の他銘柄とまとまらない。価格はアプリ側を正として送る（メニューの税設定は流用）
-      items.push({ menuId: own.menuId, quantity: it.quantity, name: sakeOrderName(s), sellingPrice: { ...own.sellingPrice, amount: String(s.price) } });
+      items.push({ menuId: own.menuId, quantity: it.quantity, name, sellingPrice: { ...own.sellingPrice, amount: String(unitPrice) } });
     } else if (sakeMenu) {
       items.push({
         menuId: sakeMenu.menuId,
         quantity: it.quantity,
-        name: sakeOrderName(s),
-        sellingPrice: { amount: String(s.price), tax: "included", taxRate: sakeMenu.taxRate, taxType: sakeMenu.taxType },
+        name,
+        sellingPrice: { amount: String(unitPrice), tax: "included", taxRate: sakeMenu.taxRate, taxType: sakeMenu.taxType },
       });
     } else {
       unresolved.push({ sakeId: it.sakeId, brand: s.brand });
       continue;
     }
-    ordered.push({ sakeId: s.id, quantity: it.quantity, price: s.price, brand: s.brand });
+    ordered.push({ sakeId: s.id, quantity: it.quantity, size, cups: it.quantity * CUPS[size], price: unitPrice, brand: s.brand });
   }
 
   // #19 部分成功化：注文できる銘柄が1つでもあれば通す（未解決は unresolved で返してカートに残す）。
@@ -170,7 +182,7 @@ export async function POST(req: NextRequest) {
       orderId: placed.orderId,
       setKind: "single", // 将来 'flight3'(飲み比べ) 等を入れるための区別
       total: orderTotal,
-      items: ordered, // {sakeId, quantity, price, brand}＝客単価・プレミア率の集計に使う
+      items: ordered, // {sakeId, quantity, size, cups, price, brand}＝客単価・杯数集計に使う（旧ログは cups なし→ cups ?? quantity で後方互換）
       unresolved: unresolved.length,
     });
 
@@ -183,7 +195,8 @@ export async function POST(req: NextRequest) {
       const uid = verifySession(c.get(MEMBER_COOKIE)?.value);
       const gid = uid ? "" : (await readGuest()) || "";
       for (const o of ordered) {
-        const qty = Math.max(1, Math.min(99, Math.floor(o.quantity)));
+        // 図鑑の杯数は90mlグラス換算（1合・熱燗=+2）
+        const qty = Math.max(1, Math.min(99, Math.floor(o.cups)));
         if (uid) {
           await run(
             "INSERT INTO member_tasted (line_user_id, sake_id, tasted_date, count) VALUES (?, ?, date('now','localtime'), ?) ON CONFLICT(line_user_id, sake_id) DO UPDATE SET count = count + ?",
@@ -247,9 +260,10 @@ export async function POST(req: NextRequest) {
           "UPDATE sakes SET opened_at=datetime('now','localtime') WHERE id = ? AND (opened_at IS NULL OR opened_at='')",
           [o.sakeId]
         );
+        // 残数は90mlグラス換算で減らす（1合・熱燗は-2）
         await run(
           "UPDATE sakes SET stock_count = MAX(0, stock_count - ?), updated_at=datetime('now','localtime') WHERE id = ? AND stock_count IS NOT NULL",
-          [o.quantity, o.sakeId]
+          [o.cups, o.sakeId]
         );
         // 売切＝その瓶は終わり。次の瓶に備えて開栓日もリセット（残数管理中の銘柄のみ到達しうる）
         const soldRes = await run(

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { QuickAdd } from "./QuickAdd";
-import { addToCart, currentTable, orderingUiEnabled, type CartItem } from "@/lib/cart";
+import { addToCart, currentTable, orderingUiEnabled, type CartSake } from "@/lib/cart";
 import { T } from "@/components/T";
 import { useLang } from "@/lib/lang";
 import { Mascot, MascotSpeech } from "@/components/Mascot";
@@ -62,9 +62,10 @@ export function Recommend({ open: openProp, onOpenChange }: { open?: boolean; on
   const canAsk = !!mood || !!text.trim() || prefs.length > 0;
 
   const canOrder = orderingUiEnabled() && !!currentTable();
-  const toCartItem = (r: Rec): CartItem => ({ id: r.id, brand: r.brand, grade: r.grade, price: r.price, volume: r.volume });
+  const toCartItem = (r: Rec): CartSake => ({ id: r.id, brand: r.brand, grade: r.grade, price: r.price, volume: r.volume });
   function addAll() {
-    items.forEach((r) => addToCart(toCartItem(r)));
+    // 一括追加は基準のグラス(90ml)で入れる（1合・熱燗は銘柄のサイズ選択から）
+    items.forEach((r) => addToCart({ ...toCartItem(r), size: "glass" }));
     setOpen(false); // カートバーを見せる
   }
 

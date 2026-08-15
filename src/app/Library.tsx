@@ -133,6 +133,7 @@ export function Library({ sakes, today, recommendIds }: { sakes: Sake[]; today: 
                   />
                   <QuickAdd
                     sake={{ id: s.id, brand: s.brand, grade: s.grade, price: s.price, volume: s.volume }}
+                    kanOk={s.kanOk}
                     className="absolute bottom-2 right-2"
                   />
                 </div>
@@ -146,7 +147,7 @@ export function Library({ sakes, today, recommendIds }: { sakes: Sake[]; today: 
                   </p>
                   {s.price != null && (
                     <p className="mt-1 text-[11px] font-bold text-ink">
-                      ¥{s.price.toLocaleString()} <span className="font-normal text-ink-soft">/ {s.volume}</span>
+                      ¥{s.price.toLocaleString()} <span className="font-normal text-ink-soft">/ <T ja={`グラス(${s.volume || "90ml"})`} en={`glass (${s.volume || "90ml"})`} /></span>
                     </p>
                   )}
                 </div>
@@ -185,6 +186,7 @@ export function Library({ sakes, today, recommendIds }: { sakes: Sake[]; today: 
                   />
                   <QuickAdd
                     sake={{ id: s.id, brand: s.brand, grade: s.grade, price: s.price, volume: s.volume }}
+                    kanOk={s.kanOk}
                     className="absolute bottom-2 right-2"
                   />
                 </div>
@@ -198,7 +200,7 @@ export function Library({ sakes, today, recommendIds }: { sakes: Sake[]; today: 
                   </p>
                   {s.price != null && (
                     <p className="mt-1 text-[11px] font-bold text-ink">
-                      ¥{s.price.toLocaleString()} <span className="font-normal text-ink-soft">/ {s.volume}</span>
+                      ¥{s.price.toLocaleString()} <span className="font-normal text-ink-soft">/ <T ja={`グラス(${s.volume || "90ml"})`} en={`glass (${s.volume || "90ml"})`} /></span>
                     </p>
                   )}
                 </div>
@@ -306,7 +308,7 @@ function SakeCard({ sake: s, index, tasted }: { sake: Sake; index: number; taste
           priority={index < 2}
         />
         {!s.isHidden && !soldout && (
-          <QuickAdd sake={{ id: s.id, brand: s.brand, grade: s.grade, price: s.price, volume: s.volume }} className="absolute bottom-2.5 right-2.5" />
+          <QuickAdd sake={{ id: s.id, brand: s.brand, grade: s.grade, price: s.price, volume: s.volume }} kanOk={s.kanOk} className="absolute bottom-2.5 right-2.5" />
         )}
       </div>
       <div className="px-3.5 pb-3.5 pt-3">
@@ -349,7 +351,7 @@ function SakeCard({ sake: s, index, tasted }: { sake: Sake; index: number; taste
         </div>
         {!s.isHidden && s.price != null && (
           <p className={`mt-1.5 text-[11px] font-bold ${s.isPremium ? "text-gilt" : "text-ink"}`}>
-            ¥{s.price.toLocaleString()} <span className="font-normal text-ink-soft">/ {s.volume}</span>
+            ¥{s.price.toLocaleString()} <span className="font-normal text-ink-soft">/ <T ja={`グラス(${s.volume || "90ml"})`} en={`glass (${s.volume || "90ml"})`} /></span>
           </p>
         )}
         {!s.isHidden && !soldout && (

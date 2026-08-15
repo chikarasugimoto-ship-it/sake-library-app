@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useCart, setQty, clearCart, currentTable, orderingUiEnabled } from "@/lib/cart";
+import { useCart, setQty, clearCart, currentTable, orderingUiEnabled, cartKey } from "@/lib/cart";
+import { normalizeSize, priceFor, sizeLabel } from "@/lib/sizes";
 import { useCollection, rankFor, nextRank } from "@/lib/collection";
 import { rarityRank, type Rarity } from "@/lib/sakegami";
 import { SakegamiReveal } from "./SakegamiReveal";
@@ -59,7 +60,7 @@ export function CartBar() {
       const res = await fetch("/api/order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: lines.map((l) => ({ sakeId: l.item.id, quantity: l.qty })) }),
+        body: JSON.stringify({ items: lines.map((l) => ({ sakeId: l.item.id, quantity: l.qty, size: l.item.size })) }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -70,7 +71,7 @@ export function CartBar() {
       // 注文成功 → 神おろしへ（手応えのハプティック）
       haptic([0, 18, 30, 24]);
       // 図鑑に登録（種類1回だけ・重複しない・杯数は数えない）。お祝い情報を作る
-      const ordered = (j.ordered || []) as { sakeId: number; quantity: number; brand?: string }[];
+      const ordered = (j.ordered || []) as { sakeId: number; quantity: number; size?: string; brand?: string }[];
       const unresolvedItems = (j.unresolved || []) as { sakeId: number; brand?: string }[];
       const before = tasted.size;
       const newKinds = ordered.filter((o) => !tasted.has(o.sakeId)).length;
@@ -92,7 +93,7 @@ export function CartBar() {
       for (const o of ordered) markTasted(o.sakeId);
       // #19: 注文できた分だけカートから消す。未注文（unresolved）はカートに残してスタッフ対応へ
       if (unresolvedItems.length) {
-        for (const o of ordered) setQty(o.sakeId, 0);
+        for (const o of ordered) setQty(cartKey(o.sakeId, normalizeSize(o.size)), 0);
       } else {
         clearCart();
       }
@@ -289,26 +290,30 @@ export function CartBar() {
 
             <div className="space-y-2">
               {lines.map((l) => (
-                <div key={l.item.id} className="flex items-center gap-3 rounded-xl bg-card px-3.5 py-3">
+                <div key={l.key} className="flex items-center gap-3 rounded-xl bg-card px-3.5 py-3">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-bold">
                       {l.item.brand}
                       {l.item.grade ? <span className="ml-1 text-xs font-normal text-ink-soft">{l.item.grade}</span> : null}
                     </p>
+                    {/* サイズ（グラス/1合/熱燗）と、そのサイズの単価（1合・熱燗=グラス×2） */}
                     <p className="text-[11px] text-ink-soft">
-                      ¥{(l.item.price || 0).toLocaleString()} / {l.item.volume || "—"}
+                      {l.item.size === "kan" ? "🔥 " : ""}
+                      <T ja={sizeLabel(l.item.size, "ja")} en={sizeLabel(l.item.size, "en")} />
+                      {" ・ ¥"}
+                      {priceFor(l.item.price || 0, l.item.size).toLocaleString()}
                     </p>
                   </div>
                   <div className="flex items-center gap-2.5">
                     <button
-                      onClick={() => setQty(l.item.id, l.qty - 1)}
+                      onClick={() => setQty(l.key, l.qty - 1)}
                       className="flex h-8 w-8 items-center justify-center rounded-full border border-hairline text-lg"
                     >
                       −
                     </button>
                     <span className="w-5 text-center text-sm font-bold">{l.qty}</span>
                     <button
-                      onClick={() => setQty(l.item.id, l.qty + 1)}
+                      onClick={() => setQty(l.key, l.qty + 1)}
                       className="flex h-8 w-8 items-center justify-center rounded-full border border-hairline text-lg"
                     >
                       ＋

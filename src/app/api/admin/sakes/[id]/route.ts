@@ -26,6 +26,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     photo_type?: string;
     stock?: number | null;
     beginner?: boolean;
+    kanOk?: boolean; // 熱燗可（1合徳利のみ）のトグル
     fresh?: boolean | null; // 鮮度枠の手動上書き（null=自動判定 / true=必ず出す / false=出さない）
     details?: {
       brand?: string;
@@ -109,6 +110,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       sakeId,
     ]);
     await audit("sake.beginner", { id: sakeId, beginner: !!b.beginner });
+  }
+
+  // 熱燗可（1合徳利のみ）のトグル。注文APIはこのフラグをサーバー側でも最終検証する
+  if (b.kanOk !== undefined) {
+    await run("UPDATE sakes SET kan_ok = ?, updated_at = datetime('now','localtime') WHERE id = ?", [
+      b.kanOk ? 1 : 0,
+      sakeId,
+    ]);
+    await audit("sake.kan_ok", { id: sakeId, kanOk: !!b.kanOk });
   }
 
   // 鮮度枠（開けたて・お早めに）の手動上書き。null=自動判定に戻す / true=必ず出す / false=出さない

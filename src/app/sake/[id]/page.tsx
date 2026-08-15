@@ -109,7 +109,7 @@ export default async function SakeDetail({ params }: { params: Promise<{ id: str
         <div className="mt-3 flex items-baseline gap-2">
           {s.price != null && (
             <p className="text-xl font-bold">
-              ¥{s.price.toLocaleString()} <span className="text-xs font-normal text-ink-soft">/ {s.volume}</span>
+              ¥{s.price.toLocaleString()} <span className="text-xs font-normal text-ink-soft">/ <T ja={`グラス(${s.volume || "90ml"})`} en={`glass (${s.volume || "90ml"})`} /></span>
             </p>
           )}
           {s.isPremium && (
@@ -156,7 +156,7 @@ export default async function SakeDetail({ params }: { params: Promise<{ id: str
           </div>
         )}
 
-        {orderable && <OrderButton sake={{ id: s.id, brand: s.brand, grade: s.grade, price: s.price, volume: s.volume }} />}
+        {orderable && <OrderButton sake={{ id: s.id, brand: s.brand, grade: s.grade, price: s.price, volume: s.volume }} kanOk={s.kanOk} />}
         <CollectionButtons id={s.id} total={total} />
 
         <section className="mt-8">

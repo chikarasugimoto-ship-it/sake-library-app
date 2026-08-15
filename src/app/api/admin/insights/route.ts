@@ -24,14 +24,15 @@ export async function POST() {
   const pickCount = new Map<number, number>();
   const texts: string[] = [];
   for (const l of logs) {
-    let p: { items?: { sakeId: number; quantity: number }[]; prefs?: string[]; text?: string; picked?: number[] };
+    let p: { items?: { sakeId: number; quantity: number; cups?: number }[]; prefs?: string[]; text?: string; picked?: number[] };
     try {
       p = JSON.parse(l.payload);
     } catch {
       continue;
     }
     if (l.action === "order.placed") {
-      for (const it of p.items ?? []) orderQty.set(Number(it.sakeId), (orderQty.get(Number(it.sakeId)) ?? 0) + (Number(it.quantity) || 1));
+      // 90mlグラス換算の杯数（1合=2）。旧ログは cups が無いので quantity（従来どおり）
+      for (const it of p.items ?? []) orderQty.set(Number(it.sakeId), (orderQty.get(Number(it.sakeId)) ?? 0) + (Number(it.cups ?? it.quantity) || 1));
     } else if (l.action === "ai.recommend") {
       for (const pr of p.prefs ?? []) prefCount.set(String(pr), (prefCount.get(String(pr)) ?? 0) + 1);
       if (p.text && String(p.text).trim() && texts.length < 15) texts.push(String(p.text).trim().slice(0, 60));

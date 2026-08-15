@@ -31,7 +31,9 @@ async function orderLogs(): Promise<OrderLog[]> {
 }
 
 function eachItem(log: OrderLog, cb: (sakeId: number, qty: number) => void) {
-  let p: { items?: { sakeId: number; quantity: number }[] };
+  // 2026-08-16 サイズ対応: 新ログは cups（90mlグラス換算・1合=2）を持つ。
+  // 旧ログ（cupsなし）は quantity をそのまま使う＝過去の集計値は変わらない（後方互換）。
+  let p: { items?: { sakeId: number; quantity: number; cups?: number }[] };
   try {
     p = JSON.parse(log.payload);
   } catch {
@@ -39,7 +41,7 @@ function eachItem(log: OrderLog, cb: (sakeId: number, qty: number) => void) {
   }
   for (const it of p.items ?? []) {
     const id = Number(it.sakeId);
-    const qty = Math.max(0, Number(it.quantity) || 0);
+    const qty = Math.max(0, Number(it.cups ?? it.quantity) || 0);
     if (id && qty) cb(id, qty);
   }
 }

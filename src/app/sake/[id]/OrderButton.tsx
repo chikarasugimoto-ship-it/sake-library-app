@@ -1,45 +1,37 @@
 "use client";
 
-import { addToCart, setQty, useCart, currentTable, orderingUiEnabled, type CartItem } from "@/lib/cart";
+import { useState } from "react";
+import { useCart, currentTable, orderingUiEnabled, type CartSake } from "@/lib/cart";
+import { SizePicker } from "@/components/SizePicker";
 import { T } from "@/components/T";
 
 // 詳細ページの「注文に追加」。注文UIが有効＆卓QRで来ているときだけ表示。
-// カートに入っていれば「− 杯数 ＋」で増減できる。
-export function OrderButton({ sake }: { sake: CartItem }) {
+// 2026-08-16 サイズ対応: タップでサイズ選択シート（グラス/1合/熱燗）を開く。
+// カートに入っている数（この銘柄・サイズ横断）はボタンに出し、増減もシート内で行う。
+export function OrderButton({ sake, kanOk = false }: { sake: CartSake; kanOk?: boolean }) {
   const { lines } = useCart();
+  const [open, setOpen] = useState(false);
   if (!orderingUiEnabled() || !currentTable()) return null;
 
-  const inCart = lines.find((l) => l.item.id === sake.id)?.qty ?? 0;
+  const inCart = lines.filter((l) => l.item.id === sake.id).reduce((n, l) => n + l.qty, 0);
 
-  if (inCart === 0) {
-    return (
+  return (
+    <>
       <button
-        onClick={() => addToCart(sake)}
+        onClick={() => setOpen(true)}
         className="mt-3 w-full rounded-full bg-moss-deep py-4 text-[15px] font-bold tracking-wider text-white active:scale-[0.99]"
       >
-        🍶 <T ja="この日本酒を注文に追加" en="Add this sake to your order" />
+        {inCart === 0 ? (
+          <>
+            🍶 <T ja="この日本酒を注文に追加" en="Add this sake to your order" />
+          </>
+        ) : (
+          <>
+            🍶 <T ja={`カートに ${inCart}つ ・ サイズを選んで追加`} en={`${inCart} in cart · choose a size`} />
+          </>
+        )}
       </button>
-    );
-  }
-  return (
-    <div className="mt-3 flex w-full items-center justify-between rounded-full bg-moss-deep px-3 py-2 text-white">
-      <button
-        onClick={() => setQty(sake.id, inCart - 1)}
-        aria-label="1杯減らす"
-        className="flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-2xl leading-none active:scale-90"
-      >
-        −
-      </button>
-      <span className="text-[15px] font-bold tracking-wider">
-        <T ja={`カートに ${inCart}杯`} en={`${inCart} in cart`} />
-      </span>
-      <button
-        onClick={() => addToCart(sake)}
-        aria-label="1杯増やす"
-        className="flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-2xl leading-none active:scale-90"
-      >
-        ＋
-      </button>
-    </div>
+      <SizePicker sake={sake} kanOk={kanOk} open={open} onClose={() => setOpen(false)} />
+    </>
   );
 }

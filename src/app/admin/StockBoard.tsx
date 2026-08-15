@@ -291,6 +291,18 @@ export function StockBoard({
     }
   }
 
+  // 熱燗可（1合徳利のみ）のトグル。ONにすると客アプリのサイズ選択に「熱燗1合」が出る
+  async function setKanOk(id: number, next: boolean) {
+    const prev = sakes;
+    setSakes((list) => list.map((s) => (s.id === id ? { ...s, kanOk: next } : s)));
+    const res = await fetch(`/api/admin/sakes/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kanOk: next }),
+    });
+    if (!res.ok) setSakes(prev); // 失敗時は戻す
+  }
+
   // 初心者おすすめ（客の一覧トップ「今日の3本」に出す）
   async function setBeginner(id: number, next: boolean) {
     const prev = sakes;
@@ -392,6 +404,8 @@ export function StockBoard({
         左の<b className="text-moss-deep">📷</b>で写真を酒神カラー背景に撮り直せます（中身はそのまま）。
         <br />
         <b className="text-[#caa23f]">☆</b> を押すと客アプリのトップに「<b className="text-moss-deep">日本酒がはじめての方へ・今日の3本</b>」として表示されます（おすすめ {sakes.filter((s) => s.isBeginner).length}/3）。
+        <br />
+        <b className="text-[#c2410c]">🔥 熱燗</b> を押すと、その銘柄の注文画面で「<b className="text-moss-deep">熱燗1合</b>」が選べるようになります（1合徳利のみ・価格はグラスの2倍。現在 {sakes.filter((s) => s.kanOk).length}銘柄が熱燗可）。
       </p>
 
       <div className="mx-6 mb-3 flex items-center gap-3">
@@ -520,9 +534,19 @@ export function StockBoard({
                   <span className="ml-1.5 rounded bg-[#80868c] px-1.5 py-0.5 align-middle text-[9.5px] font-bold text-white">売切にしました</span>
                 )}
               </p>
-              <p className="text-[11px] text-ink-soft">
+              <p className="flex items-center gap-1.5 text-[11px] text-ink-soft">
                 {s.price != null ? `¥${s.price.toLocaleString()}` : "¥—"}
-                {s.bottleSize && <span className="ml-1 text-[10px]">({s.bottleSize})</span>}
+                {s.bottleSize && <span className="text-[10px]">({s.bottleSize})</span>}
+                {/* 熱燗可トグル（1合徳利のみ・価格はグラス×2）。ONで客のサイズ選択に「熱燗1合」が出る */}
+                <button
+                  onClick={() => setKanOk(s.id, !s.kanOk)}
+                  title="熱燗可（1合徳利のみ・グラス価格×2）。ONにすると注文画面で熱燗が選べます"
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${
+                    s.kanOk ? "bg-[#c2410c] text-white" : "border border-hairline text-[#b0aea6]"
+                  }`}
+                >
+                  🔥 熱燗{s.kanOk ? "可" : "−"}
+                </button>
               </p>
               {/* 納品日（登録日）と杯数（注文実績・90mlグラス）＝発注判断の材料 */}
               {(s.deliveredAt || cups[s.id]) && (

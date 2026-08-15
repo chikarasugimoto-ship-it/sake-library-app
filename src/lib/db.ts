@@ -260,6 +260,9 @@ const MIGRATIONS = [
   "UPDATE sakes SET delivered_at = COALESCE(created_at, datetime('now','localtime')) WHERE delivered_at IS NULL OR delivered_at = ''",
   // 杯数集計・日報の既読管理が audit_logs を action で引くための索引
   "CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action, id)",
+  // ===== 1合・熱燗対応（2026-08-16）=====
+  // 熱燗可フラグ（銘柄ごと・在庫ボードでトグル）。1=熱燗OK（1合徳利のみ）。既定0=熱燗不可
+  "ALTER TABLE sakes ADD COLUMN kan_ok INTEGER DEFAULT 0",
 ];
 
 async function init() {
@@ -358,7 +361,8 @@ export type SakeRow = {
   fresh_flag?: number | null;
   i18n?: string;
   bottle_size?: string; // 瓶の容量（'1.8L' | '720ml' | '750ml'。90ml提供の杯数目安に使う）
+  kan_ok?: number; // 熱燗可（1=OK・1合徳利のみ。0/NULL=不可）
 };
 
 export const SAKE_COLUMNS =
-  "id, brand, sub_name, brewery, prefecture, grade, price, volume, description, taste_tags, pairings, taste_chart, season_label, is_hidden, (photo IS NOT NULL) AS has_photo, photo_type, label_color, status, sort_order, updated_at, delivered_at, soldout_at, stock_count, is_beginner, opened_at, fresh_flag, i18n, bottle_size";
+  "id, brand, sub_name, brewery, prefecture, grade, price, volume, description, taste_tags, pairings, taste_chart, season_label, is_hidden, (photo IS NOT NULL) AS has_photo, photo_type, label_color, status, sort_order, updated_at, delivered_at, soldout_at, stock_count, is_beginner, opened_at, fresh_flag, i18n, bottle_size, kan_ok";
