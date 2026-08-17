@@ -54,7 +54,8 @@ export function cupsFromName(name: string, qty: number): number {
 // UI表示用ラベル（酒コレ・MO共通の文言）
 export function sizeLabel(size: SakeSize, lang: "ja" | "en" = "ja"): string {
   if (lang === "en") {
-    return size === "go" ? "Gō carafe (180ml)" : size === "kan" ? "Hot sake · gō (180ml)" : "Glass (90ml)";
+    return size === "go" ? "Gō carafe" : size === "kan" ? "Hot sake · gō" : "Glass (90ml)";
   }
-  return size === "go" ? "1合(180ml)" : size === "kan" ? "熱燗1合(180ml)" : "グラス(90ml)";
+  // 容量mlの明記はグラスのみ（2026-08-18 オーナー指示「1合・熱燗に180mlの記載はしない」）
+  return size === "go" ? "1合" : size === "kan" ? "熱燗1合" : "グラス(90ml)";
 }

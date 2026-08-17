@@ -1,5 +1,6 @@
 "use client";
 
+import { createPortal } from "react-dom";
 import { useCart, addToCart, setQty, cartKey, type CartSake } from "@/lib/cart";
 import { type SakeSize, priceFor, sizeLabel } from "@/lib/sizes";
 import { T } from "@/components/T";
@@ -42,7 +43,11 @@ export function SizePicker({
     setQty(cartKey(sake.id, size), qtyOf(size) - 1);
   };
 
-  return (
+  // 【重要】document.body へのポータル描画にする。
+  // 一覧カード（<Link>内・transformを持つ祖先の中）でそのまま描画すると、CSSの仕様で
+  // fixed が「画面」ではなく変形された祖先を基準にしてしまい、シートがカード内に
+  // 押し込まれて縦に潰れる（2026-08-18 実機で発生）。ポータルなら常に画面最上位に出る。
+  return createPortal(
     <div
       className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40"
       onClick={(e) => {
@@ -123,6 +128,7 @@ export function SizePicker({
           <T ja="OK（カートへ）" en="Done" />
         </button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
