@@ -38,8 +38,9 @@ export async function POST(req: NextRequest) {
       updated++;
     } else {
       const { lastInsertRowid } = await run(
-        `INSERT INTO sakes (store_id, brand, price, cost_excl_tax, bottle_size, kubun, delivered_at, sort_order)
-         VALUES (1, ?, ?, ?, ?, ?, datetime('now','localtime'), (SELECT COALESCE(MAX(sort_order),0)+1 FROM sakes))`,
+        // kan_ok=1: 新規銘柄は既定で熱燗可（2026-08-18 オーナー指示「すべての銘柄で熱燗できるように」。不可にしたい銘柄だけ在庫ボードで個別OFF）
+        `INSERT INTO sakes (store_id, brand, price, cost_excl_tax, bottle_size, kubun, kan_ok, delivered_at, sort_order)
+         VALUES (1, ?, ?, ?, ?, ?, 1, datetime('now','localtime'), (SELECT COALESCE(MAX(sort_order),0)+1 FROM sakes))`,
         [brand, it.price, it.cost_excl_tax ?? null, size, kubun]
       );
       created++;

@@ -50,8 +50,8 @@ export async function POST(req: NextRequest) {
     `INSERT INTO sakes
       (store_id, brand, sub_name, brewery, prefecture, grade, price, volume, description,
        taste_tags, pairings, taste_chart, season_label, is_hidden, photo, photo_type, label_color,
-       bottle_size, delivered_at, sort_order)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       bottle_size, kan_ok, delivered_at, sort_order)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
        datetime('now','localtime'), (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM sakes))`,
     [
       brand.slice(0, 60),
@@ -70,6 +70,10 @@ export async function POST(req: NextRequest) {
       photo,
       photo ? (b.photo_type ?? "image/jpeg") : "",
       /^#[0-9a-fA-F]{6}$/.test(b.label_color ?? "") ? b.label_color! : "#1e3d2f",
+      // 瓶の容量（既知の値のみ・PATCH側と同じ検証）。
+      // ※2026-08-14のコミットで列とプレースホルダだけ追加され、この値のバインドが漏れていた
+      //   （プレースホルダ17個に対し引数16個→bottle_sizeが常にNULL保存）。2026-08-18に修正。
+      ["1.8L", "720ml", "750ml"].includes(String(b.bottle_size)) ? String(b.bottle_size) : null,
     ]
   );
   await audit("sake.create", { id: lastInsertRowid, brand });

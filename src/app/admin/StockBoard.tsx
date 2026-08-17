@@ -173,6 +173,31 @@ export function StockBoard({
     setFixBusy(false);
   }
 
+  // 熱燗可の一括ON（2026-08-18 オーナー指示「すべての銘柄で熱燗できるようにしてほしい」）。
+  // 現役全銘柄の kan_ok を 1 にする。OFFに戻すのは銘柄ごとの個別「🔥熱燗」トグルで。
+  const [kanBusy, setKanBusy] = useState(false);
+  async function enableKanAll() {
+    if (!confirm(`全銘柄（${sakes.length}件）を熱燗可にします。\n客の注文画面で、どの銘柄でも「熱燗1合」（1合徳利のみ・価格はグラスの2倍）が選べるようになります。\n\n特定の銘柄だけ熱燗をやめたい場合は、実行後に各銘柄の「🔥熱燗」を押してOFFにしてください。よろしいですか？`)) return;
+    setKanBusy(true);
+    try {
+      const res = await fetch("/api/admin/sakes/kan-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ on: true }),
+      });
+      const j = await res.json().catch(() => null);
+      if (res.ok && j?.ok) {
+        setReMsg(`✓ 全銘柄を熱燗可にしました：新たにON ${j.changed}件（計${j.total}銘柄）。ページを再読み込みします`);
+        setTimeout(() => location.reload(), 1200);
+      } else {
+        setReMsg(`熱燗可の一括設定に失敗しました（${j?.error || res.status}）`);
+      }
+    } catch {
+      setReMsg("熱燗可の一括設定に失敗しました（通信エラー）");
+    }
+    setKanBusy(false);
+  }
+
   async function syncSmaregi() {
     if (!confirm("登録中の日本酒をすべてスマレジに商品登録します。\n（既に登録済みのものはスキップ）")) return;
     setSyncing(true);
@@ -393,6 +418,16 @@ export function StockBoard({
               title="残数を全て「管理しない」へ戻し、現在売切の銘柄を一括で提供中に戻します（以後の売切は手動のみ）"
             >
               {fixBusy ? "解除中…" : "🔓 自動売切を全解除（売切→提供中）"}
+            </button>
+          )}
+          {owner && (
+            <button
+              onClick={enableKanAll}
+              disabled={kanBusy}
+              className="rounded-full border border-[#c2410c] bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-[#c2410c] disabled:opacity-50"
+              title="全銘柄の注文画面で「熱燗1合」を選べるようにします（外したい銘柄は実行後に個別の🔥熱燗でOFF）"
+            >
+              {kanBusy ? "設定中…" : "🔥 全銘柄を熱燗可にする"}
             </button>
           )}
         </div>
