@@ -275,6 +275,25 @@ async function init() {
       // カラム既存などは無視
     }
   }
+  // ===== 一度きりのデータ移行（settingsに実行記録を残し、再実行しない）=====
+  // 2026-08-18 杉本さん指示「（在庫ボードのボタンを押さなくても）すべての銘柄を熱燗可にしてほしい」。
+  // 起動のたびに走らせると、後から個別トグルでOFFにした銘柄が勝手にONへ戻ってしまうため、
+  // 実行済みフラグ付きの一度きり移行にする（以後のON/OFFは在庫ボードのボタン・トグルで）。
+  try {
+    const done = await c.execute({
+      sql: "SELECT value FROM settings WHERE key = 'once_kan_all_on_2026_08_18'",
+      args: [],
+    });
+    if (done.rows.length === 0) {
+      const r = await c.execute("UPDATE sakes SET kan_ok = 1 WHERE archived = 0");
+      await c.execute({
+        sql: "INSERT INTO settings (key, value) VALUES ('once_kan_all_on_2026_08_18', ?) ON CONFLICT(key) DO NOTHING",
+        args: [`applied changed=${r.rowsAffected}`],
+      });
+    }
+  } catch {
+    // 移行失敗は致命的でない（次回起動時に再挑戦される）
+  }
 }
 
 function ready(): Promise<void> {
