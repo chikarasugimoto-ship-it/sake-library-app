@@ -5,8 +5,10 @@ import { all, get, run } from "./db";
 
 export type OwnerKind = "member" | "guest";
 
-// 隠し酒プレゼントの節目（集めた種類数）。初回10種で早い達成感→以降50刻み。
-export const REWARD_MILESTONES_SERVER = [10, 50, 100, 150, 200];
+// 隠し酒プレゼントの節目（集めた種類数）。2026-08-18 オーナー指示で「50種ごと」→「30種ごと」に変更。
+// 30/60/90…の等間隔（殿堂入り200種の範囲内＝180まで）。
+// 旧節目 [10, 50, 100, 150, 200] 時代に発行済みのgrantとの突合は pendingMilestones() を参照。
+export const REWARD_MILESTONES_SERVER = [30, 60, 90, 120, 150, 180];
 
 // 人が口頭で言える短いコード（例 SK-AB12-CD34）。Math.random/crypto いずれでも可。
 function genCode(): string {
@@ -22,11 +24,45 @@ function genCode(): string {
   return `SK-${a}-${b}`;
 }
 
-// 種類数の節目に達していて未発行のものを発行（冪等＝二重発行しない）。
-export async function issueRewards(ownerKind: OwnerKind, ownerId: string, kinds: number): Promise<void> {
-  if (!ownerId) return;
+// 新節目のうち「この保有状況でまだ発行すべき節目」を返す（発行済みreason一覧との突合）。
+// 制度変更（旧50刻み→30刻み・2026-08-18）をまたいだ二重付与の防止:
+//  - 旧制度で発行済みのgrant（milestone:50 / 100 / 200 など新節目リストに無い番号）は、
+//    新節目1回ぶんの「発行済み枠」として下位の節目から消化する。
+//    例) 55種・旧grant{10,50}保有 → 新節目[30]は50のgrantが枠を消化＝発行しない（二重付与なし）。
+//        65種になったら [30,60] のうち30を50が消化→ milestone:60 を新規発行（計2回＝新ルール通り）。
+//  - 旧・初回10種ボーナス(milestone:10)は「おまけ」扱いで枠を消費しない。
+//    例) 45種・旧grant{10}のみ → 変更後の初回判定（図鑑オープン/注文時）で milestone:30 を遡及発行。
+// 判定は kinds >= m の到達済み節目のみ・reasonのUNIQUE制約＋INSERT OR IGNOREで同時実行でも冪等。
+export function pendingMilestones(kinds: number, reasons: string[]): number[] {
+  const have = new Set<number>();
+  for (const r of reasons) {
+    const m = /^milestone:(\d+)$/.exec(r);
+    if (m) have.add(Number(m[1]));
+  }
+  // 旧制度のみの節目番号（新リストに無い・初回10ボーナスを除く）＝発行済み枠
+  let legacyCredit = [...have].filter((n) => n >= REWARD_MILESTONES_SERVER[0] && !REWARD_MILESTONES_SERVER.includes(n)).length;
+  const out: number[] = [];
   for (const m of REWARD_MILESTONES_SERVER) {
     if (kinds < m) break;
+    if (have.has(m)) continue;
+    if (legacyCredit > 0) {
+      legacyCredit--;
+      continue;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+// 種類数の節目に達していて未発行のものを発行（冪等＝二重発行しない）。
+export async function issueRewards(ownerKind: OwnerKind, ownerId: string, kinds: number): Promise<void> {
+  if (!ownerId || kinds < REWARD_MILESTONES_SERVER[0]) return;
+  // 既存のマイルストーンgrant（旧50刻み時代ぶんを含む）を読み、突合してから不足のみ発行
+  const rows = await all<{ reason: string }>(
+    "SELECT reason FROM reward_grants WHERE owner_kind = ? AND owner_id = ? AND reason LIKE 'milestone:%'",
+    [ownerKind, ownerId]
+  );
+  for (const m of pendingMilestones(kinds, rows.map((r) => r.reason))) {
     try {
       await run(
         `INSERT OR IGNORE INTO reward_grants (store_id, owner_kind, owner_id, reason, code, cap_yen, status)

@@ -278,10 +278,11 @@ export function formatDate(iso: string): string {
 
 // ===== 位（くらい）：集めた種類数で昇格【2026-06-18 種類ベース＝注文で図鑑登録・同じ酒は1回・杯数は数えない】 =====
 // 引数は「集めた種類数」。違う日本酒を集めるほど位が上がり、200種で殿堂入り（以降ランク固定で図鑑だけ増える）。
-// 50種ごとに隠し酒プレゼントのマイルストーン。お店の酒は入れ替わるので通えば200種も到達可能。
+// 30種ごとに隠し酒プレゼントのマイルストーン（2026-08-18 オーナー指示で50種ごと→30種ごと）。
+// お店の酒は入れ替わるので通えば200種も到達可能。
 export const HALL_OF_FAME = 200; // この種類数で殿堂入り（最高位・以降ランクは上がらない）
-export const REWARD_STEP = 50; // 何種ごとに隠し酒プレゼントか
-export const REWARD_MILESTONES = [50, 100, 150, 200]; // 隠し酒プレゼントの節目（種類数）
+export const REWARD_STEP = 30; // 何種ごとに隠し酒プレゼントか
+export const REWARD_MILESTONES = [30, 60, 90, 120, 150, 180]; // 隠し酒プレゼントの節目（種類数・rewards.tsのサーバー定義と一致させる）
 
 export type Rank = { min: number; name: string; sub: string; icon: string; nameEn: string; subEn: string };
 
@@ -345,13 +346,13 @@ export function rankThemeFor(cups: number): RankTheme {
 export function isHallOfFame(cups: number): boolean {
   return cups >= HALL_OF_FAME;
 }
-// これまでに獲得した隠し酒プレゼントの数（0〜4）
+// これまでに獲得した隠し酒プレゼントの数（0〜節目の総数）
 export function rewardsEarned(cups: number): number {
-  return Math.min(Math.floor(cups / REWARD_STEP), HALL_OF_FAME / REWARD_STEP);
+  return Math.min(Math.floor(cups / REWARD_STEP), REWARD_MILESTONES.length);
 }
-// 次の隠し酒プレゼントまで（殿堂入り後は null）
+// 次の隠し酒プレゼントまで（最終節目を超えたら null＝コンプリート）
 export function nextReward(cups: number): { target: number; remaining: number } | null {
-  if (cups >= HALL_OF_FAME) return null;
   const target = Math.floor(cups / REWARD_STEP) * REWARD_STEP + REWARD_STEP;
+  if (target > REWARD_MILESTONES[REWARD_MILESTONES.length - 1]) return null;
   return { target, remaining: target - cups };
 }

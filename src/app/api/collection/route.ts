@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { verifySession, MEMBER_COOKIE } from "@/lib/line";
 import { readGuest, newGuestId, guestCookieOptions, GUEST_COOKIE } from "@/lib/guest";
 import { all, get, run } from "@/lib/db";
-import { issueRewards, listRewards, claimGod } from "@/lib/rewards";
+import { issueRewards, listRewards, claimGod, pendingMilestones } from "@/lib/rewards";
 
 async function kindsOf(table: "member_tasted" | "guest_tasted", col: "line_user_id" | "guest_id", id: string): Promise<number> {
   const r = await get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} = ?`, [id]);
@@ -62,7 +62,7 @@ export async function GET() {
       // 統合に失敗しても図鑑表示は続ける
     }
     // 逐次→並列（往復回数を1回ぶんに圧縮＝アカウントステータスの取得を高速化）
-    const [m, tasted, rewards] = await Promise.all([
+    const [m, tasted, rewardsFetched] = await Promise.all([
       get<{ display_name: string; nickname: string; picture_url: string; show_on_ranking: number; public_slug: string; avatar_sake_id: number }>(
         "SELECT display_name, nickname, picture_url, show_on_ranking, public_slug, avatar_sake_id FROM members WHERE line_user_id = ?",
         [uid]
@@ -70,6 +70,17 @@ export async function GET() {
       memberTasted(uid),
       listRewards("member", uid),
     ]);
+    // 節目変更（50種ごと→30種ごと・2026-08-18）の遡及: 図鑑を開いた時点で不足の節目があれば発行。
+    // 手元のrewards一覧との突合で不足が見える時だけDBへ書く（普段のオープンは追加往復なし・冪等）。
+    let rewards = rewardsFetched;
+    try {
+      if (pendingMilestones(Object.keys(tasted).length, rewards.map((r) => r.reason)).length > 0) {
+        await issueRewards("member", uid, Object.keys(tasted).length);
+        rewards = await listRewards("member", uid);
+      }
+    } catch {
+      // 発行に失敗しても図鑑表示は続ける（次のオープン/注文時に再判定される）
+    }
     return NextResponse.json({
       member: { name: (m?.nickname || m?.display_name) ?? "", picture: m?.picture_url ?? "", onRanking: !!m?.show_on_ranking, slug: m?.public_slug ?? "" },
       tasted,
@@ -92,6 +103,15 @@ export async function GET() {
     tasted = t;
     rewards = rw;
     avatarSakeId = Number(g?.avatar_sake_id) || 0;
+    // 節目変更（50種ごと→30種ごと・2026-08-18）の遡及発行（会員側GETと同じ・不足がある時だけ）
+    try {
+      if (pendingMilestones(Object.keys(tasted).length, rewards.map((r) => r.reason)).length > 0) {
+        await issueRewards("guest", gid, Object.keys(tasted).length);
+        rewards = await listRewards("guest", gid);
+      }
+    } catch {
+      // 発行に失敗しても図鑑表示は続ける
+    }
   }
   const res = NextResponse.json({ member: null, guest: true, tasted, rewards, avatarSakeId });
   if (!existing) res.cookies.set(GUEST_COOKIE, gid, guestCookieOptions());

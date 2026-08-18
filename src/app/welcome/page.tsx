@@ -75,7 +75,7 @@ function Demo({ table, onDone }: { table: string; onDone: () => void }) {
     { ja: "② 飲んだ酒が、酒神になる", en: "② Your sake becomes a god" },
     { ja: "③ 図鑑に登録！ ぐんぐん増える", en: "③ Added! Your count climbs" },
     { ja: "④ ランキングで、みんなと競う", en: "④ Compete on the ranking" },
-    { ja: "⑤ 50種ごとに、幻の隠し酒が解禁！", en: "⑤ Every 50 kinds unlocks a secret sake!" },
+    { ja: "⑤ 30種ごとに、幻の隠し酒が解禁！", en: "⑤ Every 30 kinds unlocks a secret sake!" },
   ];
 
   return (
@@ -180,7 +180,7 @@ function Demo({ table, onDone }: { table: string; onDone: () => void }) {
               <div className="absolute inset-0 overflow-hidden" style={{ background: "radial-gradient(circle at 50% 46%, #2b2733 0%, #0d0d12 72%)", animation: "dm-zoom 3.4s cubic-bezier(.2,.7,.2,1) both" }}>
                 {Array.from({ length: 14 }).map((_, i) => (<span key={i} className="absolute h-1.5 w-1.5 rounded-full" style={{ left: `${50 + Math.cos((i / 14) * 6.283) * 36}%`, top: `${46 + Math.sin((i / 14) * 6.283) * 32}%`, background: "#ffd76a", animation: `dm-spark ${1.2 + (i % 3) * 0.2}s ease-out ${1.3 + (i % 5) * 0.07}s both` }} />))}
                 <div className="absolute inset-0 flex flex-col items-center justify-center px-3 text-center" style={{ animation: "dm-shake .6s ease-in-out 1.25s" }}>
-                  <p className="text-[13px] text-[#e8d1a0]" style={{ fontFamily: MINCHO, animation: "dm-rise .5s ease .15s both" }}>図鑑を<span className="px-1 text-[19px] font-extrabold text-white">50種</span>集めるごとに…</p>
+                  <p className="text-[13px] text-[#e8d1a0]" style={{ fontFamily: MINCHO, animation: "dm-rise .5s ease .15s both" }}>図鑑を<span className="px-1 text-[19px] font-extrabold text-white">30種</span>集めるごとに…</p>
                   <p className="mt-1 text-[44px] font-extrabold leading-none text-[#ffd76a]" style={{ animation: "dm-punch .5s cubic-bezier(.2,.8,.3,1.3) .6s both", textShadow: "0 3px 16px rgba(0,0,0,.55)" }}>！？！？</p>
                   <div className="mt-3 flex items-start justify-center gap-2">
                     {SECRET.map((s, i) => (
@@ -221,13 +221,13 @@ const ORBIT = [
   { id: 19, x: 4, y: 118, s: 46, d: 0.72 },
 ];
 
-// ===== 起動の顔：すぎだまる(立体)＋酒神が集う → 50種で隠し酒(1杯サービス) =====
+// ===== 起動の顔：すぎだまる(立体)＋酒神が集う → 30種で隠し酒(1杯サービス) =====
 export default function Welcome() {
   const router = useRouter();
   const lang = useLang();
   const [table, setTable] = useState("");
   const [mode, setMode] = useState<"gate" | "demo">("gate");
-  const [gp, setGp] = useState(0); // 0=すぎだまる＋酒神が集う / 1=図鑑が酒神で満ちていく / 2=50種ごとに隠し酒
+  const [gp, setGp] = useState(0); // 0=すぎだまる＋酒神が集う / 1=図鑑が酒神で満ちていく / 2=30種ごとに隠し酒
   const [filled, setFilled] = useState(0); // gp=1で図鑑に増えていく酒神の数
   const goRef = useRef<() => void>(() => {});
   const done = useRef(false);
@@ -245,7 +245,7 @@ export default function Welcome() {
   useEffect(() => {
     if (mode !== "gate") return;
     const t1 = setTimeout(() => setGp(1), 3000); // 図鑑が満ちていくビートへ
-    const t2 = setTimeout(() => setGp(2), 6200); // 50種ごとに隠し酒
+    const t2 = setTimeout(() => setGp(2), 6200); // 30種ごとに隠し酒
     const t3 = setTimeout(() => goRef.current(), 9400);
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, [mode]);
@@ -302,7 +302,7 @@ export default function Welcome() {
       {/* ブランド */}
       <p className="gt-anim text-[12px] tracking-[0.36em] text-[#caa86a]" style={{ fontFamily: MINCHO, animation: "gt-up 1s ease .3s forwards" }}>酒神奇譚 ・ 酒コレ</p>
 
-      {/* 中央ステージ（gp0=すぎだまる＋酒神 / gp1=50種で隠し酒） */}
+      {/* 中央ステージ（gp0=すぎだまる＋酒神 / gp1=30種で隠し酒） */}
       <div key={gp} className="relative my-5 flex items-center justify-center" style={{ width: 300, height: 292, animation: "gt-fade .5s ease-out" }}>
         {gp === 0 ? (
           <>
@@ -351,7 +351,7 @@ export default function Welcome() {
           </div>
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <p data-gtm className="text-[14px] text-[#e8d1a0]" style={{ fontFamily: MINCHO, animation: "gt-up .5s ease .1s both" }}>図鑑を<span className="px-1 text-[20px] font-extrabold text-white">50種</span>集めるごとに</p>
+            <p data-gtm className="text-[14px] text-[#e8d1a0]" style={{ fontFamily: MINCHO, animation: "gt-up .5s ease .1s both" }}>図鑑を<span className="px-1 text-[20px] font-extrabold text-white">30種</span>集めるごとに</p>
             <div className="mt-3 flex items-start justify-center gap-2.5">
               {SECRET.map((s, i) => (
                 <div key={s.id} data-gtm className="flex flex-col items-center" style={{ animation: `gt-punch .55s cubic-bezier(.2,.8,.3,1.3) ${0.35 + i * 0.24}s both` }}>
