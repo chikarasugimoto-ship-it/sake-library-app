@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { all, SAKE_COLUMNS, type SakeRow } from "@/lib/db";
 import { toSake } from "@/lib/types";
+import { canOrderGo } from "@/lib/sizes";
 
 // 日本酒の表示データを返す。
 //  - ?ids=1,2,3 … 指定IDのみ（削除済み/写真なしも含む＝図鑑バックフィル用・従来）。
@@ -42,6 +43,10 @@ export async function GET(req: NextRequest) {
       price: s.price,
       volume: s.volume,
       kanOk: s.kanOk, // 熱燗可（MOのサイズ選択がライブ取得で参照。欠落時はMO側でfalse扱い）
+      // 残数（90mlグラス換算・null=管理していない）と「1合・熱燗を出せるか」（残り2杯以上）。
+      // 2026-09-30: MOが注文時に「残りを超える杯数」を断り、注文後に /api/order/consume で減らすために公開。
+      stockCount: s.stockCount,
+      goOk: canOrderGo(s.stockCount),
       status: s.status,
       updatedAt: s.updatedAt,
       rarity: row.god_rarity || "",

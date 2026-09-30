@@ -59,3 +59,10 @@ export function sizeLabel(size: SakeSize, lang: "ja" | "en" = "ja"): string {
   // 容量mlの明記はグラスのみ（2026-08-18 オーナー指示「1合・熱燗に180mlの記載はしない」）
   return size === "go" ? "1合" : size === "kan" ? "熱燗1合" : "グラス(90ml)";
 }
+
+// 1合・熱燗はグラス2杯ぶん（CUPS）。残数管理している銘柄で残りが1杯しかなければ提供できない。
+// 2026-08-21 オーナー報告「1合を頼まれたのに出せない問題が続出」への対応。
+// 残数を管理していない銘柄（null=無制限）は常に注文可。
+export function canOrderGo(stockCount: number | null | undefined): boolean {
+  return stockCount == null || stockCount >= CUPS.go;
+}

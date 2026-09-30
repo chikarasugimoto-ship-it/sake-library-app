@@ -206,6 +206,13 @@ const SCHEMA = [
     payload TEXT NOT NULL DEFAULT '',
     computed_at INTEGER NOT NULL DEFAULT 0
   )`,
+  // MO（モバイルオーダー）から受け取った日本酒注文の冪等キー（/api/order/consume）。
+  // 同じMO注文を二度受けても残数を二重に減らさないためだけの表。
+  `CREATE TABLE IF NOT EXISTS mo_consumed (
+    ext_ref TEXT PRIMARY KEY,
+    payload TEXT NOT NULL DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`,
 ];
 
 // 後付けカラム（既存DBにも安全に追加。失敗＝既に存在は無視）
