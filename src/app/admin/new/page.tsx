@@ -4,7 +4,6 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { resizeForAI, buildDisplayPhoto, type Bbox } from "@/lib/photo";
-import { rarityFor } from "@/lib/sakegami";
 import { missingInfo } from "@/lib/types";
 
 type Draft = {
@@ -90,14 +89,12 @@ export default function NewSake() {
         body: JSON.stringify({ image: ai.base64, media_type: "image/jpeg" }),
       });
       let bbox: Bbox = { x: 0, y: 0, w: 1, h: 1 };
-      let rarity = "R"; // 酒神カラー背景用（認識した銘柄/特定名称から推定）
       if (res.ok) {
         const r = (await res.json()) as Omit<Draft, "price" | "season_label" | "is_hidden"> & {
           confidence: number;
           bbox?: Bbox;
         };
         if (r.bbox) bbox = r.bbox;
-        rarity = rarityFor({ grade: r.grade, brand: r.brand });
         setDraft({ ...EMPTY, ...r, price: "", taste_tags: r.taste_tags ?? [], pairings: r.pairings ?? [] });
       } else {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
@@ -106,7 +103,7 @@ export default function NewSake() {
       }
       setStatusMsg("背景を整えています…（初回は少し時間がかかります）");
       try {
-        const built = await buildDisplayPhoto(bitmap, bbox, rarity);
+        const built = await buildDisplayPhoto(bitmap, bbox);
         setPhoto({ base64: built.base64, preview: built.preview });
       } catch {
         // 補正に失敗しても元写真(ai)のまま継続
@@ -139,7 +136,7 @@ export default function NewSake() {
           if (j.bbox) bbox = j.bbox;
         }
       } catch {}
-      const built = await buildDisplayPhoto(bitmap, bbox, rarityFor({ price: draft.price ? Number(draft.price) : null, grade: draft.grade, seasonLabel: draft.season_label, isHidden: draft.is_hidden, brand: draft.brand }));
+      const built = await buildDisplayPhoto(bitmap, bbox);
       setPhoto({ base64: built.base64, preview: built.preview });
     } catch {
       setError("写真の処理に失敗しました");
@@ -299,7 +296,7 @@ export default function NewSake() {
               </div>
               {!photo && (
                 <p className="mt-1.5 text-[11px] leading-snug text-[#b04a3a]">
-                  写真がないと、お客様の一覧・図鑑には表示されません（データのみ保存）。
+                  写真がないと、お客様の一覧には表示されません（データのみ保存）。
                 </p>
               )}
             </div>
@@ -393,7 +390,7 @@ export default function NewSake() {
               onChange={(e) => set({ is_hidden: e.target.checked })}
               className="h-5 w-5 accent-[#1e3d2f]"
             />
-            <span className="text-sm">本日の隠し酒にする（一覧で「？？？」表示）</span>
+            <span className="text-sm">お客様の一覧に出さない（特別提供用）</span>
           </label>
 
           <div className="mt-5 flex gap-3">

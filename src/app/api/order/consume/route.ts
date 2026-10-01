@@ -17,7 +17,6 @@ import { CUPS, normalizeSize, priceFor, type SakeSize } from "@/lib/sizes";
 //   - 冪等: ext_ref = "mo:<MOの注文ID>" を mo_consumed に先に入れる。既にあれば何もしない（dedup=true）。
 //   - 集計: 在庫ボードの「30日◯杯・累計◯杯」は audit_logs の order.placed を数えているので、
 //     同じ形（items[].sakeId / quantity / cups）で source:"mo" を付けて残す＝MOの杯数も集計に入る。
-//   - 図鑑（member_tasted）には入れない（MOのお客様は酒コレの会員ではない）。
 // ============================================================================
 
 export const dynamic = "force-dynamic";

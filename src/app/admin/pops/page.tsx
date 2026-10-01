@@ -55,7 +55,7 @@ export default async function PopsPage() {
         <div>
           <p className="kicker">STAFF</p>
           <h1>卓POP（A4・{pops.length}卓）</h1>
-          <p className="hint">各卓に1枚ずつ置くA4のPOPです。QRをお客様がスマホで読むと、その卓の日本酒メニュー＆図鑑が開きます。右下に卓番を小さく入れています。</p>
+          <p className="hint">各卓に1枚ずつ置くA4のPOPです。QRをお客様がスマホで読むと、その卓の日本酒メニューが開きます。右下に卓番を小さく入れています。</p>
         </div>
         <button className="print-btn">🖨 全部印刷</button>
       </div>
@@ -65,17 +65,16 @@ export default async function PopsPage() {
           <div className="frame">
             <div className="zone ztop">
               <Sugidama size={88} />
-              <p className="brand">酒コレ&nbsp;・&nbsp;酒神コレクション</p>
+              <p className="brand">酒コレ&nbsp;・&nbsp;煮干しと日本酒 すぎだま</p>
               <div className="rule" />
-              <h2 className="tagline">飲んだ日本酒が、図鑑になる。</h2>
-              <p className="lead">このお店の日本酒が、スマホの中で“図鑑”になる。</p>
+              <h2 className="tagline">本日の日本酒、スマホで選んで、そのまま注文。</h2>
+              <p className="lead">味わいチャートと、すぎだまるの相談つき。</p>
             </div>
 
             <ul className="points zone">
               <li><span className="pn">本日の銘柄</span>今日飲める約40種を、味わいとともに</li>
               <li><span className="pn">AIで探す</span>好みを伝えると、貴方に合う一本をAIが提案</li>
-              <li><span className="pn">図鑑を育てる</span>飲んだ一杯が記憶され、図鑑ランクが昇格</li>
-              <li><span className="pn">図鑑ランキング</span>集めた銘柄数で、みんなと競えるランキング</li>
+              <li><span className="pn">味わいチャート</span>甘み・酸味・香り・キレを5段階で</li>
               <li><span className="pn">そのまま注文</span>気になる一本を、この画面から注文</li>
             </ul>
 

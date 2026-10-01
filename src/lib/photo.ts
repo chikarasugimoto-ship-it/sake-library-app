@@ -66,7 +66,7 @@ export async function buildDisplayPhoto(
   }
 }
 
-// レア度ごとの「酒神カラー」ステージ（中心は明るく瓶が映える／中間＝レア度の色／外側＝深い同系色）。
+// 背景ステージの色（以前は酒神レア度で色分けしていた名残。いまは既定の R だけ使う）（中心は明るく瓶が映える／中間＝レア度の色／外側＝深い同系色）。
 // N・R=緑、SR=銅、SSR=金、UR=藍紫、LR=黒×金。glow＝上部の後光、shadow＝瓶の影色。
 const STAGE: Record<string, { mid: string; edge: string; glow: string; shadow: string }> = {
   N:   { mid: "#6b8a78", edge: "#314d3e", glow: "rgba(200,205,196,0.20)", shadow: "rgba(12,28,20,0.36)" },
@@ -116,7 +116,7 @@ function alphaBounds(bmp: ImageBitmap): { sx: number; sy: number; sw: number; sh
   }
 }
 
-// 切り抜いた瓶を「酒神カラー（レア度色）背景」に合成。中心は明るくラベルが映える。
+// 切り抜いた瓶を深緑の背景に合成。中心は明るくラベルが映える。
 function composeOnGod(cutBmp: ImageBitmap, rarity: string): { base64: string; preview: string } {
   const st = STAGE[rarity] || STAGE.R;
   const c = document.createElement("canvas");
@@ -174,27 +174,6 @@ function composeOnGod(cutBmp: ImageBitmap, rarity: string): { base64: string; pr
   ctx.drawImage(cutBmp, b.sx, b.sy, b.sw, b.sh, x, y, dw, dh);
   const u = c.toDataURL("image/jpeg", 0.9);
   return { base64: u.split(",")[1], preview: u };
-}
-
-// 既存の掲載写真（白背景JPEG）を酒神カラー背景に置き換える＝白を切り抜いて再合成。
-// rarity＝その銘柄の酒神レア度。bbox不要（既に枠が整っている）。失敗時は null（スキップ）。
-export async function reprocessToGodBg(bitmap: ImageBitmap, rarity = "R"): Promise<{ base64: string } | null> {
-  const wscale = Math.min(1, 1000 / bitmap.height);
-  const wc = document.createElement("canvas");
-  wc.width = Math.round(bitmap.width * wscale);
-  wc.height = Math.round(bitmap.height * wscale);
-  wc.getContext("2d")!.drawImage(bitmap, 0, 0, wc.width, wc.height);
-  try {
-    const blob = await new Promise<Blob>((res, rej) =>
-      wc.toBlob((b) => (b ? res(b) : rej(new Error("blob"))), "image/jpeg", 0.92)
-    );
-    const { removeBackground } = await import("@imgly/background-removal");
-    const cut = await removeBackground(blob, { output: { format: "image/png" } });
-    const cutBmp = await createImageBitmap(cut);
-    return { base64: composeOnGod(cutBmp, rarity).base64 };
-  } catch {
-    return null;
-  }
 }
 
 // 軽い自動レベル補正（暗い/明るい/色かぶりをならす）。輝度1%〜99%を0〜255へ伸長

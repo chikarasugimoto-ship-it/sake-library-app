@@ -88,7 +88,7 @@ export function orderingUiEnabled(): boolean {
 export function useCart() {
   const state = useSyncExternalStore(subscribe, () => lines, () => EMPTY);
   const list = Object.entries(state).map(([key, l]) => ({ key, item: l.item, qty: l.qty }));
-  // count＝90mlグラス換算の杯数（1合・熱燗は×2。「◯杯」表示と図鑑演出に使う）
+  // count＝90mlグラス換算の杯数（1合・熱燗は×2。「◯杯」表示に使う）
   const count = list.reduce((n, l) => n + l.qty * CUPS[l.item.size], 0);
   // 合計金額はサイズ後の単価（1合・熱燗=グラス×2）で計算
   const total = list.reduce((n, l) => n + priceFor(l.item.price || 0, l.item.size) * l.qty, 0);

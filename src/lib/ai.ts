@@ -269,7 +269,7 @@ export type SakeTranslateIn = {
   description?: string;
   tasteTags?: string[];
   pairings?: string[];
-  kuchijo?: string; // 酒神の口上（あれば英訳）
+  kuchijo?: string; // 旧・酒神の口上（互換のため残す・いまは渡さない）
 };
 export type SakeTranslateOut = {
   id: number;
@@ -331,79 +331,6 @@ Rules:
       kuchijoEn: String(r.kuchijoEn ?? "").slice(0, 300),
     }))
     .filter((r) => Number.isInteger(r.id));
-}
-
-// ===== 酒神メタの一括生成：産地/蔵元を補完し、酒神名＋口上を作る =====
-export type GodMetaIn = { id: number; brand: string; grade?: string; brewery?: string; prefecture?: string };
-export type GodMetaOut = { id: number; prefecture?: string; brewery?: string; godName?: string; kuchijo?: string };
-
-// 複数銘柄を1回のAI呼び出しでまとめて生成（コスト・速度のため最大40件ずつ呼び出し側で分割）。
-// 産地/蔵元は「分かるものだけ」補完（不明は空＝でっち上げない）。酒神名＝二字+神、口上＝30字以内の詩的一文。
-export async function enrichGodMeta(sakes: GodMetaIn[]): Promise<GodMetaOut[]> {
-  if (!aiAvailable() || sakes.length === 0) return [];
-  const client = new Anthropic();
-  const list = sakes
-    .map((s) => `id:${s.id} | ${s.brand}${s.grade ? " " + s.grade : ""}${s.brewery ? `（蔵:${s.brewery}）` : ""}${s.prefecture ? `（${s.prefecture}）` : ""}`)
-    .join("\n");
-  const SYS = `あなたは日本酒に非常に詳しい専門家です。各銘柄について次を返します（JSONのみ・前置き不要）:
-- prefecture: その銘柄の蔵元の所在「都道府県」。確実に知っている場合のみ（例「山形」）。不明なら空文字。推測でのでっち上げ禁止。
-- brewery: 蔵元名。確実に知っている場合のみ。不明なら空文字。
-- godName: その酒に宿る「酒神獣（モンスター）」の名。ポケモン的な響きの良い創作名（カタカナ/和風造語・3〜6文字）。**「神」で終わらせない**。銘柄の由来・味・蔵の個性から創作。
-- kuchijo: そのモンスターの図鑑説明。25字以内・特徴を詩的な一文で。
-形式: {"gods":[{"id":数値, "prefecture":"", "brewery":"", "godName":"", "kuchijo":""}, ...]}
-全銘柄ぶん返す。godName/kuchijo は必ず作る。prefecture/brewery は確実なものだけ。`;
-  try {
-    const res = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 4000,
-      system: SYS,
-      messages: [{ role: "user", content: `次の日本酒それぞれに酒神メタを付けてください:\n${list}` }],
-    });
-    const txt = res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
-    const m = txt.match(/\{[\s\S]*\}/);
-    if (!m) return [];
-    const raw = JSON.parse(m[0]) as { gods?: { id?: number; prefecture?: string; brewery?: string; godName?: string; kuchijo?: string }[] };
-    const valid = new Set(sakes.map((s) => s.id));
-    return (raw.gods ?? [])
-      .map((g) => ({
-        id: Number(g.id),
-        prefecture: String(g.prefecture ?? "").trim().slice(0, 10),
-        brewery: String(g.brewery ?? "").trim().slice(0, 30),
-        godName: String(g.godName ?? "").trim().slice(0, 20),
-        kuchijo: String(g.kuchijo ?? "").trim().slice(0, 60),
-      }))
-      .filter((g) => valid.has(g.id));
-  } catch {
-    return [];
-  }
-}
-
-// ===== 酒神モンスターの名前生成（1銘柄ずつ・創作モンスター名）=====
-export async function generateMonsterName(sake: { brand: string; grade?: string; prefecture?: string; rarity?: string }): Promise<{ name: string; kuchijo: string }> {
-  if (!aiAvailable() || !sake.brand) return { name: "", kuchijo: "" };
-  const client = new Anthropic();
-  const SYS = `あなたは収集モンスターゲーム（ポケモン等）のネーミング担当です。日本酒に宿る「酒神獣（しゅしんじゅう）」というモンスターの名前を1体ぶん考えます。
-ルール:
-- 響きの良い創作モンスター名。カタカナ、または和風の造語。3〜6文字程度。
-- **「神」で終わらせない**。「◯◯の神」のような平凡な名前は禁止。ポケモン的な固有名詞にする。
-- 銘柄名・産地・レア度の雰囲気を反映する（高レア度ほど強そう・神秘的）。
-- あわせて図鑑の一行説明（kuchijo・25字以内・そのモンスターの特徴を詩的に）も作る。
-JSONのみ返す（前置き不要）。形式: {"name":"カタカナ等の名前", "kuchijo":"一行説明"}`;
-  try {
-    const res = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 200,
-      system: SYS,
-      messages: [{ role: "user", content: `日本酒「${sake.brand}${sake.grade ? " " + sake.grade : ""}」（${sake.prefecture || "産地不明"}・レア度${sake.rarity || "N"}）に宿る酒神獣の名前を考えてください。` }],
-    });
-    const txt = res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
-    const m = txt.match(/\{[\s\S]*\}/);
-    if (!m) return { name: "", kuchijo: "" };
-    const raw = JSON.parse(m[0]) as { name?: string; kuchijo?: string };
-    return { name: String(raw.name ?? "").trim().slice(0, 20), kuchijo: String(raw.kuchijo ?? "").trim().slice(0, 60) };
-  } catch {
-    return { name: "", kuchijo: "" };
-  }
 }
 
 // ===== メニュー（品書き）一括スキャン：1枚から複数の日本酒を抽出 =====

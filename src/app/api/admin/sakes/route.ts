@@ -103,6 +103,5 @@ export async function POST(req: NextRequest) {
     }
   }
   revalidatePath("/");
-  revalidatePath("/zukan");
   return NextResponse.json({ ok: true, id: lastInsertRowid, smaregi });
 }

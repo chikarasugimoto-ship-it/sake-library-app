@@ -4,14 +4,8 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import type { Sake } from "@/lib/types";
 import { digestDays, daysSinceDelivery, fmtMD, missingInfo, photoUrl } from "@/lib/types";
-import { resizeForAI, buildDisplayPhoto, reprocessToGodBg, type Bbox } from "@/lib/photo";
-import { rarityFor } from "@/lib/sakegami";
+import { resizeForAI, buildDisplayPhoto, type Bbox } from "@/lib/photo";
 import { PasswordChange } from "./PasswordChange";
-
-// Sake → 酒神レア度（写真背景の色分けに使う・rarityForと同じ判定）
-function rarityOf(s: Sake): string {
-  return rarityFor({ price: s.price, grade: s.grade, seasonLabel: s.seasonLabel, isHidden: s.isHidden, brand: s.brand });
-}
 
 const STATUS_LABELS: { value: Sake["status"]; label: string; activeClass: string }[] = [
   { value: "available", label: "提供中", activeClass: "bg-moss text-white" },
@@ -28,22 +22,18 @@ function dupKey(s: Sake): string {
 export function StockBoard({
   initialSakes,
   owner = false,
-  godReadyIds = [],
   cups = {},
 }: {
   initialSakes: Sake[];
   owner?: boolean;
-  godReadyIds?: number[];
   cups?: Record<number, { total: number; d30: number }>; // 注文実績からの杯数（90mlグラス）
 }) {
   const [sakes, setSakes] = useState(initialSakes);
-  const godReady = new Set(godReadyIds);
   // 重複の疑い（現役一覧の中で同一キーが2件以上）
   const dupCounts = new Map<string, number>();
   for (const s of sakes) dupCounts.set(dupKey(s), (dupCounts.get(dupKey(s)) || 0) + 1);
   const isDup = (s: Sake) => (dupCounts.get(dupKey(s)) || 0) >= 2;
   const issueStats = {
-    noGod: sakes.filter((s) => !godReady.has(s.id)).length,
     // 情報不足＝必須5項目（銘柄・酒蔵・都道府県・特定名称・価格）のどれかが空（価格未設定もここに統合）
     noInfo: sakes.filter((s) => missingInfo(s).length > 0).length,
     dup: sakes.filter(isDup).length,
@@ -108,8 +98,7 @@ export function StockBoard({
           if (j.bbox) bbox = j.bbox;
         }
       } catch {}
-      const tgt = sakes.find((x) => x.id === id);
-      const built = await buildDisplayPhoto(bitmap, bbox, tgt ? rarityOf(tgt) : "R");
+      const built = await buildDisplayPhoto(bitmap, bbox);
       const res = await fetch(`/api/admin/sakes/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -122,35 +111,8 @@ export function StockBoard({
     setBusyPhoto(null);
   }
 
-  // 既存写真を一括で「酒神カラー背景」に再加工（ブラウザで1枚ずつ・白を切り抜いて置き直す）
-  const [reBusy, setReBusy] = useState(false);
+  // 一括操作（自動売切の全解除・全銘柄を熱燗可）の結果メッセージ
   const [reMsg, setReMsg] = useState("");
-  async function reprocessAll() {
-    const targets = sakes.filter((s) => s.hasPhoto);
-    if (!targets.length) { setReMsg("写真のある銘柄がありません"); return; }
-    if (!confirm(`${targets.length}件の写真を「酒神カラー背景」に再加工します。\nブラウザで1枚ずつ処理するため数分かかります。この画面を開いたままお待ちください。`)) return;
-    setReBusy(true);
-    let done = 0, failed = 0;
-    for (const s of targets) {
-      setReMsg(`再加工中… ${done + failed + 1}/${targets.length}`);
-      try {
-        const resp = await fetch(photoUrl(s.id, s.updatedAt));
-        const blob = await resp.blob();
-        const bmp = await createImageBitmap(blob);
-        const out = await reprocessToGodBg(bmp, rarityOf(s));
-        if (!out) { failed++; continue; }
-        const pr = await fetch(`/api/admin/sakes/${s.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ photo_base64: out.base64, photo_type: "image/jpeg" }),
-        });
-        if (pr.ok) { done++; setNewPhoto((m) => ({ ...m, [s.id]: `data:image/jpeg;base64,${out.base64}` })); }
-        else failed++;
-      } catch { failed++; }
-    }
-    setReMsg(`✓ 再加工 完了：${done}件${failed ? ` ・ 失敗 ${failed}件（時間をおいて再実行で続けられます）` : ""}`);
-    setReBusy(false);
-  }
 
   // 自動売切の全解除（2026-07-24 オーナー指示）: 残数を全て「管理しない」へ＋現在の売切を一括で提供中に戻す。
   // 以後の売切/提供中はこのボードの手動切替のみ（注文で勝手に売切にならない）。
@@ -341,7 +303,7 @@ export function StockBoard({
   }
 
   async function removeSake(id: number, brand: string) {
-    if (!confirm(`「${brand}」を消去しますか？\n客向け一覧・図鑑から消えます（「🗂 在庫から外した酒」から復元できます）。`)) return;
+    if (!confirm(`「${brand}」を消去しますか？\n客向け一覧から消えます（「🗂 在庫から外した酒」から復元できます）。`)) return;
     const prev = sakes;
     setSakes((list) => list.filter((s) => s.id !== id)); // 楽観的に消す
     const res = await fetch(`/api/admin/sakes/${id}`, {
@@ -388,12 +350,6 @@ export function StockBoard({
           <Link href="/admin/smaregi" className="rounded-full border border-hairline bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-moss-deep">
             🧾 スマレジ連携
           </Link>
-          <Link href="/admin/rewards" className="rounded-full border border-hairline bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-moss-deep">
-            🍶 隠し酒引換
-          </Link>
-          <Link href="/admin/sakegami" className="rounded-full border border-hairline bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-moss-deep">
-            🐉 酒神メタ生成
-          </Link>
           <Link href="/admin/mascot" className="rounded-full border border-hairline bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-moss-deep">
             🌱 すぎだまる生成
           </Link>
@@ -403,13 +359,6 @@ export function StockBoard({
               👥 スタッフ管理
             </Link>
           )}
-          <button
-            onClick={reprocessAll}
-            disabled={reBusy}
-            className="rounded-full border border-moss bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-moss-deep disabled:opacity-50"
-          >
-            {reBusy ? "再加工中…" : "🎨 写真を酒神背景に一括再加工"}
-          </button>
           {owner && (
             <button
               onClick={disableAutoSoldout}
@@ -436,7 +385,7 @@ export function StockBoard({
 
       <p className="mx-6 my-3 rounded-xl bg-[#eef3ef] px-4 py-2.5 text-[11.5px] text-ink-soft">
         💡 普段は<b className="text-moss-deep">触らなくてOK</b>。売り切れた時だけ「売切」を1タップ。
-        左の<b className="text-moss-deep">📷</b>で写真を酒神カラー背景に撮り直せます（中身はそのまま）。
+        左の<b className="text-moss-deep">📷</b>で写真を撮り直せます（中身はそのまま）。
         <br />
         <b className="text-[#caa23f]">☆</b> を押すと客アプリのトップに「<b className="text-moss-deep">日本酒がはじめての方へ・今日の3本</b>」として表示されます（おすすめ {sakes.filter((s) => s.isBeginner).length}/3）。
         <br />
@@ -493,16 +442,11 @@ export function StockBoard({
 
       <input ref={photoRef} type="file" accept="image/*" hidden onChange={onPhotoFile} />
 
-      {/* 要対応サマリー（酒神未生成・情報不足・重複疑い）。0件なら出さない */}
-      {(issueStats.noGod > 0 || issueStats.noInfo > 0 || issueStats.dup > 0) && (
+      {/* 要対応サマリー（情報不足・重複疑い）。0件なら出さない */}
+      {(issueStats.noInfo > 0 || issueStats.dup > 0) && (
         <div className="mx-6 mb-3 rounded-2xl border border-[#e6c98a] bg-[#fdf6e7] px-4 py-3">
           <p className="text-[12px] font-bold text-[#8a6414]">⚠️ 要チェック</p>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {issueStats.noGod > 0 && (
-              <Link href="/admin/sakegami" className="rounded-full bg-[#8a5fbf] px-2.5 py-1 text-[11px] font-bold text-white">
-                🐉 酒神未生成 {issueStats.noGod}件 → 生成へ
-              </Link>
-            )}
             {issueStats.noInfo > 0 && (
               <span className="rounded-full bg-[#b3261e] px-2.5 py-1 text-[11px] font-bold text-white">
                 📝 情報不足 {issueStats.noInfo}件（✎で追記。銘柄・酒蔵・県・特定名称・価格は必須）
@@ -563,7 +507,7 @@ export function StockBoard({
               <p className="truncate text-sm font-bold">
                 {s.brand}
                 {s.grade && <span className="ml-1 font-normal text-ink-soft">{s.grade}</span>}
-                {s.isHidden && <span className="ml-1 text-[10px] text-moss-deep">（隠し酒）</span>}
+                {s.isHidden && <span className="ml-1 text-[10px] text-moss-deep">（一覧に出さない）</span>}
                 {/* この画面で売切にしたもの＝一時的に残しているだけ、と分かるようにする */}
                 {justSoldout.has(s.id) && !showSoldout && (
                   <span className="ml-1.5 rounded bg-[#80868c] px-1.5 py-0.5 align-middle text-[9.5px] font-bold text-white">売切にしました</span>
@@ -603,12 +547,9 @@ export function StockBoard({
                   )}
                 </p>
               )}
-              {/* ぱっと見で分かる警告バッジ（酒神未生成・情報不足・重複疑い） */}
-              {(!godReady.has(s.id) || missingInfo(s).length > 0 || isDup(s)) && (
+              {/* ぱっと見で分かる警告バッジ（情報不足・重複疑い） */}
+              {(missingInfo(s).length > 0 || isDup(s)) && (
                 <p className="mt-0.5 flex flex-wrap gap-1">
-                  {!godReady.has(s.id) && (
-                    <span className="rounded bg-[#f0e9fa] px-1.5 py-0.5 text-[9.5px] font-bold text-[#6a4a99]">🐉 酒神未生成</span>
-                  )}
                   {missingInfo(s).length > 0 && (
                     <span className="rounded bg-[#fdecea] px-1.5 py-0.5 text-[9.5px] font-bold text-[#b3261e]">
                       📝 {missingInfo(s).join("・")}が未記載

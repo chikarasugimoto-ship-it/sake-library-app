@@ -30,6 +30,5 @@ export async function POST(req: NextRequest) {
 
   await audit("sake.kanAll", { on: b.on, changed: target?.n ?? 0, total: total?.n ?? 0 });
   revalidatePath("/");
-  revalidatePath("/zukan");
   return NextResponse.json({ ok: true, on: b.on, changed: target?.n ?? 0, total: total?.n ?? 0 });
 }

@@ -2,9 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { all, get, run, audit } from "@/lib/db";
 import { rateLimit } from "@/lib/ratelimit";
-import { verifySession, MEMBER_COOKIE } from "@/lib/line";
-import { readGuest } from "@/lib/guest";
-import { issueRewards } from "@/lib/rewards";
 import { consumeSakeStock } from "@/lib/stock-consume";
 import {
   smaregiConfigured,
@@ -184,42 +181,6 @@ export async function POST(req: NextRequest) {
       items: ordered, // {sakeId, quantity, size, cups, price, brand}＝客単価・杯数集計に使う（旧ログは cups なし→ cups ?? quantity で後方互換）
       unresolved: unresolved.length,
     });
-
-    // 【図鑑登録・タイミング＝店舗受理時】注文ボタンのタップでは登録せず、スマレジが注文を受理した
-    //  この時点（placeOrder成功後）でサーバー側で図鑑に登録する。＝送信失敗・未受理は登録されない
-    //  （キャンセル/失敗した注文が図鑑に混ざらない）。会員=member_tasted、匿名=guest_tasted。
-    //  tasted_date は初回のみ保持（first_ordered_at）、count を注文杯数ぶん加算（order_count）。
-    //  図鑑書き込みの失敗は注文を止めない（会計はスマレジで成立済み）。
-    try {
-      const uid = verifySession(c.get(MEMBER_COOKIE)?.value);
-      const gid = uid ? "" : (await readGuest()) || "";
-      for (const o of ordered) {
-        // 図鑑の杯数は90mlグラス換算（1合・熱燗=+2）
-        const qty = Math.max(1, Math.min(99, Math.floor(o.cups)));
-        if (uid) {
-          await run(
-            "INSERT INTO member_tasted (line_user_id, sake_id, tasted_date, count) VALUES (?, ?, date('now','localtime'), ?) ON CONFLICT(line_user_id, sake_id) DO UPDATE SET count = count + ?",
-            [uid, o.sakeId, qty, qty]
-          );
-        } else if (gid) {
-          await run(
-            "INSERT INTO guest_tasted (guest_id, sake_id, tasted_date, count) VALUES (?, ?, date('now','localtime'), ?) ON CONFLICT(guest_id, sake_id) DO UPDATE SET count = count + ?",
-            [gid, o.sakeId, qty, qty]
-          );
-        }
-      }
-      // 図鑑の種類が増えた可能性 → 隠し酒プレゼントの節目を判定して発行（既存ロジックに合わせる・冪等）
-      if (uid) {
-        const k = await get<{ n: number }>("SELECT COUNT(*) AS n FROM member_tasted WHERE line_user_id = ?", [uid]);
-        await issueRewards("member", uid, Number(k?.n) || 0);
-      } else if (gid) {
-        const k = await get<{ n: number }>("SELECT COUNT(*) AS n FROM guest_tasted WHERE guest_id = ?", [gid]);
-        await issueRewards("guest", gid, Number(k?.n) || 0);
-      }
-      await run("UPDATE ranking_cache SET computed_at = 0 WHERE id = 1"); // ランキング再集計を促す
-    } catch (e) {
-      await audit("collection.autolog_failed", { table: tableNumber, detail: String(e).slice(0, 150) });
-    }
 
     // 【橋渡し】日本酒注文をモバイルオーダー(MO)の自作キッチンモニターにも表示する（表示専用チケット）。
     //  会計はスマレジ（上のplaceOrder）が担当。ここはKM表示のためだけ。失敗しても注文は成立させる。

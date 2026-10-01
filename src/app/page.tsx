@@ -8,7 +8,7 @@ export const revalidate = 30;
 
 export default async function Home() {
   const rows = await all<SakeRow>(
-    // 写真があるものだけお客様に表示。隠し酒(is_hidden)はメニューに一切出さない（特別提供＝引換/サービス用。図鑑には別途残る）
+    // 写真があるものだけお客様に表示。is_hidden（お客様の一覧に出さない・特別提供用）はメニューに出さない
     `SELECT ${SAKE_COLUMNS} FROM sakes WHERE archived = 0 AND photo IS NOT NULL AND is_hidden = 0 ORDER BY sort_order, id`
   );
   const sakes = rows.map(toSake);
