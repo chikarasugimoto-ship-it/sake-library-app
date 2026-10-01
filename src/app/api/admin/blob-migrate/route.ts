@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { all, get, run, audit } from "@/lib/db";
 import { isAdmin } from "@/lib/auth";
 import { blobAvailable, putImage } from "@/lib/blob";
-import { toGodArtWebp } from "@/lib/openai-image";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -13,11 +12,10 @@ export const maxDuration = 60;
 async function counts() {
   const pt = await get<{ n: number }>("SELECT COUNT(*) AS n FROM sakes WHERE photo IS NOT NULL");
   const pd = await get<{ n: number }>("SELECT COUNT(*) AS n FROM sakes WHERE photo IS NOT NULL AND photo_url <> ''");
-  const gt = await get<{ n: number }>("SELECT COUNT(*) AS n FROM gods WHERE god_art IS NOT NULL");
-  const gd = await get<{ n: number }>("SELECT COUNT(*) AS n FROM gods WHERE god_art IS NOT NULL AND god_art_url <> ''");
   const photos = { total: Number(pt?.n) || 0, done: Number(pd?.n) || 0 };
-  const gods = { total: Number(gt?.n) || 0, done: Number(gd?.n) || 0 };
-  return { photos, gods, remaining: photos.total - photos.done + (gods.total - gods.done) };
+  // gods は互換のため 0 固定（2026-10-01 酒神をやめた。管理画面の表示が壊れないように形だけ残す）
+  const gods = { total: 0, done: 0 };
+  return { photos, gods, remaining: photos.total - photos.done };
 }
 
 export async function GET() {
@@ -50,33 +48,6 @@ export async function POST() {
     }
   }
 
-  // 2) 酒神キャラ絵（残り枠で。未webpなら移行ついでに512px webp化）
-  const remain = Math.max(0, LIMIT - photos.length);
-  if (remain > 0) {
-    const gods = await all<{ sake_id: number; god_art_type: string }>(
-      "SELECT sake_id, god_art_type FROM gods WHERE god_art IS NOT NULL AND (god_art_url IS NULL OR god_art_url = '') LIMIT ?",
-      [remain]
-    );
-    for (const g of gods) {
-      try {
-        const row = await get<{ god_art: ArrayBuffer | Uint8Array | null }>("SELECT god_art FROM gods WHERE sake_id = ?", [g.sake_id]);
-        if (!row?.god_art) continue;
-        let buf: Uint8Array = Buffer.from(row.god_art instanceof Uint8Array ? row.god_art : new Uint8Array(row.god_art));
-        let type = g.god_art_type || "image/webp";
-        if (type !== "image/webp") {
-          const small = await toGodArtWebp(buf);
-          buf = small.data;
-          type = small.type;
-          await run("UPDATE gods SET god_art = ?, god_art_type = ? WHERE sake_id = ?", [buf, type, g.sake_id]);
-        }
-        const url = await putImage(`god-art/${g.sake_id}.webp`, buf, "image/webp");
-        await run("UPDATE gods SET god_art_url = ? WHERE sake_id = ?", [url, g.sake_id]);
-        migrated++;
-      } catch (e) {
-        failed.push({ kind: "god", id: g.sake_id, error: e instanceof Error ? e.message.slice(0, 100) : "err" });
-      }
-    }
-  }
 
   await audit("blob.migrate", { migrated, failed: failed.length });
   const c = await counts();

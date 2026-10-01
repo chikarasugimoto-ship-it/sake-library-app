@@ -28,8 +28,6 @@ export async function POST(req: NextRequest) {
       await run(`INSERT INTO settings (key, value) VALUES ('${urlKey}', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [url]);
       await run(`INSERT INTO settings (key, value) VALUES ('${verKey}', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [ver]);
       await audit("mascot.save", { advisor });
-      revalidatePath("/welcome");
-      revalidatePath("/zukan");
       return NextResponse.json({ ok: true, url, ver });
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message.slice(0, 160) : "save failed" }, { status: 500 });

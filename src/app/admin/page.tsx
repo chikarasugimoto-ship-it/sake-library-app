@@ -12,23 +12,18 @@ export default async function AdminPage() {
   const owner = await isOwner();
   // 在庫ボードは「現役」だけ。前日以前に売切れた銘柄は翌日に自動で外す（→「在庫から外した日本酒」へ）。
   // 当日売切れは残す（同日中の取り消し用）。
-  // 3つの独立クエリを並行実行（従来は直列3往復＝そのぶん初期表示が遅かった）
-  const [rows, godRows, cupStats] = await Promise.all([
+  // 2つの独立クエリを並行実行
+  const [rows, cupStats] = await Promise.all([
     all<SakeRow>(
       `SELECT ${SAKE_COLUMNS} FROM sakes
        WHERE archived = 0
          AND NOT (status = 'soldout' AND soldout_at != '' AND date(soldout_at) < date('now','localtime'))
        ORDER BY sort_order, id`
     ),
-    // 酒神（キャラ）が「名前あり＋絵あり」まで生成済みの銘柄。一覧の「酒神未生成」警告に使う
-    all<{ sake_id: number }>(
-      `SELECT sake_id FROM gods
-       WHERE name <> '' AND (god_art IS NOT NULL OR COALESCE(god_art_url,'') <> '')`
-    ),
     // 杯数カウント（注文実績から集計）。カードに「30日◯杯・累計◯杯」を出して発注判断に使う
     collectCupStats(),
   ]);
   const cups: Record<number, { total: number; d30: number }> = {};
   for (const [id, c] of cupStats) cups[id] = { total: c.total, d30: c.d30 };
-  return <StockBoard initialSakes={rows.map(toSake)} owner={owner} godReadyIds={godRows.map((g) => g.sake_id)} cups={cups} />;
+  return <StockBoard initialSakes={rows.map(toSake)} owner={owner} cups={cups} />;
 }

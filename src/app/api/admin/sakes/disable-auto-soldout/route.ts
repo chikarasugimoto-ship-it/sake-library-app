@@ -23,6 +23,5 @@ export async function POST() {
 
   await audit("sake.disableAutoSoldout", { cleared: managed?.n ?? 0, restored: sold?.n ?? 0 });
   revalidatePath("/");
-  revalidatePath("/zukan");
   return NextResponse.json({ ok: true, cleared: managed?.n ?? 0, restored: sold?.n ?? 0 });
 }

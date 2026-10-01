@@ -63,8 +63,6 @@ export function EditSake({ sake, cups }: { sake: Sake; cups?: { total: number; d
   const [error, setError] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiNote, setAiNote] = useState("");
-  const [godBusy, setGodBusy] = useState(false);
-  const [godMsg, setGodMsg] = useState("");
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
   const bumpStock = (delta: number) => setStock((v) => String(Math.max(0, (Number(v) || 0) + delta)));
@@ -120,26 +118,6 @@ export function EditSake({ sake, cups }: { sake: Sake; cups?: { total: number; d
       setError(e instanceof Error ? e.message : "AI補完に失敗しました");
     }
     setAiBusy(false);
-  }
-
-  // この酒だけ酒神キャラを生成/作り直し（他のキャラは一切変わらない）。新規追加の酒の導線。
-  async function genGod() {
-    setGodBusy(true);
-    setGodMsg("");
-    setError("");
-    try {
-      const r = await fetch("/api/admin/sakegami-art", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sakeId: sake.id }),
-      });
-      const j = await r.json();
-      if (!r.ok) setError(j.message || j.error || "酒神の生成に失敗しました");
-      else setGodMsg(`✓ 酒神「${j.name || "酒神"}」を生成しました（図鑑・詳細に反映）`);
-    } catch {
-      setError("酒神生成の通信に失敗しました");
-    }
-    setGodBusy(false);
   }
 
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -376,23 +354,6 @@ export function EditSake({ sake, cups }: { sake: Sake; cups?: { total: number; d
           {aiNote && <p className="mt-2 text-[11px] font-bold text-moss-deep">{aiNote}</p>}
         </div>
 
-        {/* この酒の酒神キャラを生成（新規追加の酒の導線・他のキャラは変わらない） */}
-        <div className="mt-3 rounded-2xl border border-[#caa44c]/40 bg-[#fbf6ea] p-4">
-          <p className="text-[12.5px] font-bold text-[#8a6a25]">🐉 この酒の酒神キャラを生成</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-ink-soft">
-            この日本酒1本ぶんだけ酒神（モンスター）を作ります。<b>他のキャラは一切変わりません</b>。
-            写真があるとラベルの世界観で生成されます（無くても銘柄名から生成）。作り直したい時にも使えます。
-          </p>
-          <button
-            onClick={genGod}
-            disabled={godBusy}
-            className="mt-3 w-full rounded-full bg-[#8a6a25] py-3 text-[13.5px] font-bold text-white disabled:opacity-50"
-          >
-            {godBusy ? "酒神を生成中…（20〜40秒）" : "🐉 この酒の酒神を生成する"}
-          </button>
-          {godMsg && <p className="mt-2 text-[11px] font-bold text-[#8a6a25]">{godMsg}</p>}
-        </div>
-
         {/* 紹介文・タグ */}
         <div className="mt-3 rounded-2xl bg-card p-4 shadow-[0_1px_3px_rgba(38,40,43,0.06)]">
           <p className="text-[11px] font-bold text-ink-soft">紹介文</p>
@@ -446,7 +407,7 @@ export function EditSake({ sake, cups }: { sake: Sake; cups?: { total: number; d
 
         <label className="mt-3 flex items-center gap-3 rounded-2xl bg-card px-4 py-3.5 shadow-[0_1px_3px_rgba(38,40,43,0.06)]">
           <input type="checkbox" checked={draft.is_hidden} onChange={(e) => set({ is_hidden: e.target.checked })} className="h-5 w-5 accent-[#1e3d2f]" />
-          <span className="text-sm">隠し酒にする（お客様の一覧には表示しません・特別提供/引換用）</span>
+          <span className="text-sm">お客様の一覧に出さない（特別提供用）</span>
         </label>
 
         <div className="mt-5 flex gap-3">

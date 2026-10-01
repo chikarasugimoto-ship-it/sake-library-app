@@ -49,8 +49,6 @@ export async function consumeSakeStock(ordered: ConsumeItem[]): Promise<{ change
   }
   if (changed.length) {
     revalidatePath("/");
-    revalidatePath("/zukan");
-    for (const id of changed) revalidatePath(`/sake/${id}`);
   }
   return { changed, soldout };
 }

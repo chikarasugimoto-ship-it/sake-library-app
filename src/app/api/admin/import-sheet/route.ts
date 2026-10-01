@@ -85,6 +85,5 @@ export async function POST(req: NextRequest) {
   }
   await audit("import.sheet", { created, skipped, pasted });
   revalidatePath("/");
-  revalidatePath("/zukan");
   return NextResponse.json({ ok: true, created, skipped, total: incoming.length });
 }

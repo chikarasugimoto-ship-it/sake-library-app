@@ -41,7 +41,7 @@ type Rec = { id: number; brand: string; grade: string; prefecture: string; price
 
 // AIソムリエ：好みを伝えると、本日の在庫から合う一本を提案
 // open/onOpenChange を渡すと外部から開閉できる（一覧の空状態などから起動するため）。
-export function Recommend({ open: openProp, onOpenChange }: { open?: boolean; onOpenChange?: (v: boolean) => void } = {}) {
+export function Recommend({ open: openProp, onOpenChange, onDetail }: { open?: boolean; onOpenChange?: (v: boolean) => void; onDetail?: (id: number) => void } = {}) {
   const [openState, setOpenState] = useState(false);
   const open = openProp ?? openState;
   const setOpen = (v: boolean) => {
@@ -96,7 +96,7 @@ export function Recommend({ open: openProp, onOpenChange }: { open?: boolean; on
       <button
         onClick={() => setOpen(true)}
         aria-label="すぎだまるに相談する"
-        className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom)_+_150px)] z-40 flex flex-col items-end gap-1.5 active:scale-95"
+        className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom)_+_96px)] z-40 flex flex-col items-end gap-1.5 active:scale-95"
       >
         <span className="whitespace-nowrap rounded-full bg-moss-deep px-3 py-1 text-[10.5px] font-bold text-white shadow-[0_3px_10px_rgba(0,0,0,0.25)]">
           <T ja="すぎだまるに相談する" en="Ask Sugidamaru" />
@@ -216,7 +216,7 @@ export function Recommend({ open: openProp, onOpenChange }: { open?: boolean; on
                     </div>
                     <p className="mt-1 text-[12.5px] leading-relaxed text-[#3c3f44]">{r.reason}</p>
                     <div className="mt-2 flex items-center justify-between">
-                      <a href={`/sake/${r.id}`} className="text-[11px] font-bold text-moss"><T ja="詳細を見る ›" en="View details ›" /></a>
+                      <button type="button" onClick={() => onDetail?.(r.id)} className="text-[11px] font-bold text-moss"><T ja="味わいを見る ›" en="Taste & details ›" /></button>
                       {canOrder && <QuickAdd sake={toCartItem(r)} />}
                     </div>
                   </div>

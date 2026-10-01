@@ -6,7 +6,7 @@
 // 契約（2026-08 オーナー裁定）:
 //   SakeSize = "glass" | "go" | "kan"        // 90ml / 1合180ml / 熱燗1合（徳利のみ）
 //   価格: glass = sakes.price、go/kan = price × 2（常に2倍・例外なし）
-//   杯数換算: CUPS = { glass:1, go:2, kan:2 } // 90mlグラス基準（集計・在庫減算・図鑑加算用）
+//   杯数換算: CUPS = { glass:1, go:2, kan:2 } // 90mlグラス基準（集計・在庫減算用）
 //   表記: go=「銘柄名（1合）」 kan=「銘柄名（1合・熱燗）」（suffixはsliceの後に付ける＝欠けさせない）
 // ============================================================================
 
@@ -14,7 +14,7 @@ export type SakeSize = "glass" | "go" | "kan";
 
 export const SAKE_SIZES: readonly SakeSize[] = ["glass", "go", "kan"] as const;
 
-// 90mlグラス基準の杯数換算（1合=2杯）。在庫減算・図鑑count・杯数集計はこれを掛ける
+// 90mlグラス基準の杯数換算（1合=2杯）。在庫減算・杯数集計はこれを掛ける
 export const CUPS: Record<SakeSize, number> = { glass: 1, go: 2, kan: 2 };
 
 // 不正・未指定は "glass"（旧クライアント互換＝sizeなしのbodyは従来どおりグラス扱い）

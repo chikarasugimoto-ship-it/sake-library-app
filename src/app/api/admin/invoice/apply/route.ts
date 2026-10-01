@@ -58,6 +58,5 @@ export async function POST(req: NextRequest) {
   }
   await audit("invoice.apply", { created, updated });
   revalidatePath("/");
-  revalidatePath("/zukan");
   return NextResponse.json({ ok: true, created, updated });
 }

@@ -34,9 +34,9 @@ export async function POST() {
   if (!(await isAdmin())) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!aiAvailable()) return NextResponse.json({ error: "AIキーが未設定です（ANTHROPIC_API_KEY）" }, { status: 503 });
   const LIMIT = 3;
-  const rows = await all<{ id: number; brand: string; sub_name: string; brewery: string; prefecture: string; grade: string; description: string; taste_tags: string; pairings: string; kuchijo: string | null }>(
-    `SELECT s.id, s.brand, s.sub_name, s.brewery, s.prefecture, s.grade, s.description, s.taste_tags, s.pairings, g.kuchijo
-       FROM sakes s LEFT JOIN gods g ON g.sake_id = s.id
+  const rows = await all<{ id: number; brand: string; sub_name: string; brewery: string; prefecture: string; grade: string; description: string; taste_tags: string; pairings: string }>(
+    `SELECT s.id, s.brand, s.sub_name, s.brewery, s.prefecture, s.grade, s.description, s.taste_tags, s.pairings
+       FROM sakes s
       WHERE s.archived = 0 AND (s.i18n IS NULL OR s.i18n = '')
       ORDER BY s.sort_order, s.id LIMIT ?`,
     [LIMIT]
@@ -54,7 +54,6 @@ export async function POST() {
     description: r.description,
     tasteTags: parseArr(r.taste_tags),
     pairings: parseArr(r.pairings),
-    kuchijo: r.kuchijo || "",
   }));
   // まとめて英訳。AI応答のJSONが崩れた時は1件ずつにフォールバック（壊れた1件で全体を止めない）。
   let outs: Awaited<ReturnType<typeof translateSakesToEn>> = [];
@@ -75,11 +74,9 @@ export async function POST() {
     const o = byId.get(r.id);
     if (!o) continue;
     await run("UPDATE sakes SET i18n = ?, updated_at = datetime('now','localtime') WHERE id = ?", [JSON.stringify({ en: o.en }), r.id]);
-    if (o.kuchijoEn && r.kuchijo) await run("UPDATE gods SET kuchijo_en = ? WHERE sake_id = ?", [o.kuchijoEn, r.id]);
     translated++;
   }
   revalidatePath("/");
-  revalidatePath("/zukan");
   await audit("sake.translate", { translated });
   return NextResponse.json({ ok: true, translated, ...(await counts()) });
 }

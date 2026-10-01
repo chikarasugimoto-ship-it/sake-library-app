@@ -180,7 +180,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (becameSoldout) await recordSoldoutEvent(sakeId);
   // 客向けページ（キャッシュ）を即時更新
   revalidatePath("/");
-  revalidatePath("/zukan");
   revalidatePath(`/sake/${sakeId}`);
   return NextResponse.json({ ok: true });
 }

@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   const text = String(b.text ?? "").slice(0, 200);
   const lang = b.lang === "en" ? "en" : "ja";
 
-  // 本日提供中（売切・隠し酒・アーカイブは除外）
+  // 本日提供中（売切・非表示・アーカイブは除外）
   const rows = await all<SakeRow>(
     `SELECT ${SAKE_COLUMNS} FROM sakes WHERE archived = 0 AND is_hidden = 0 AND status != 'soldout' AND photo IS NOT NULL ORDER BY sort_order, id`
   );

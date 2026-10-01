@@ -15,6 +15,5 @@ export async function POST(req: NextRequest) {
   }
   await audit("sake.sort", { count: ids.length });
   revalidatePath("/");
-  revalidatePath("/zukan");
   return NextResponse.json({ ok: true });
 }

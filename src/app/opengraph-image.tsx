@@ -4,7 +4,7 @@ import { ImageResponse } from "next/og";
 // 日本語フォントを同梱しないため、文字化けを避けて欧文のみで構成する
 // （og:title/description の日本語コピーは各SNSが自前フォントでテキスト表示する）。
 export const runtime = "edge";
-export const alt = "酒コレ（酒神コレクション）";
+export const alt = "酒コレ";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 

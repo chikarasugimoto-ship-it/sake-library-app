@@ -62,45 +62,8 @@ const SCHEMA = [
   `INSERT INTO stores (id, slug, name)
      SELECT 1, 'sugidama', '煮干しと日本酒 すぎだま'
      WHERE NOT EXISTS (SELECT 1 FROM stores WHERE id = 1)`,
-  // LINEログイン会員と、その個人図鑑（端末をまたいで残る）
-  `CREATE TABLE IF NOT EXISTS members (
-    line_user_id TEXT PRIMARY KEY,
-    display_name TEXT DEFAULT '',
-    picture_url TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now','localtime')),
-    last_login TEXT DEFAULT (datetime('now','localtime'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS member_tasted (
-    line_user_id TEXT NOT NULL,
-    sake_id INTEGER NOT NULL,
-    tasted_date TEXT DEFAULT '',
-    count INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now','localtime')),
-    PRIMARY KEY (line_user_id, sake_id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS member_fav (
-    line_user_id TEXT NOT NULL,
-    sake_id INTEGER NOT NULL,
-    PRIMARY KEY (line_user_id, sake_id)
-  )`,
-  // 匿名（LINE未登録）でもランキングに参加できるゲスト。端末ごとの guest_id で集計。
-  `CREATE TABLE IF NOT EXISTS guests (
-    guest_id TEXT PRIMARY KEY,
-    name TEXT DEFAULT '',
-    kinds INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now','localtime')),
-    updated_at TEXT DEFAULT (datetime('now','localtime'))
-  )`,
-  // 匿名（LINE未登録）の図鑑をサーバーにも保存（端末のlocalStorageが消えても残る）。
-  // ゲストCookie sksl_guest をキーにする。member_tasted と同じ構造。
-  `CREATE TABLE IF NOT EXISTS guest_tasted (
-    guest_id TEXT NOT NULL,
-    sake_id INTEGER NOT NULL,
-    tasted_date TEXT DEFAULT '',
-    count INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now','localtime')),
-    PRIMARY KEY (guest_id, sake_id)
-  )`,
+  // 2026-10-01: 図鑑・会員・酒神・隠し酒プレゼント・ランキングをやめた。以前の表（members / member_tasted /
+  // guests / guest_tasted / gods / god_owned / reward_grants など）は本番DBに残っているが、もう読み書きしない。
   // 価格・原価などの設定（キーバリュー）
   `CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -123,89 +86,6 @@ const SCHEMA = [
     table_name TEXT DEFAULT '',
     updated_at TEXT DEFAULT (datetime('now','localtime'))
   )`,
-  // ===== 酒神図鑑 ＆ 売上グロースの土台（2026-06-22 追加・既存は不変）=====
-  // 酒神マスタ（銘柄1:1）。レア度はprice/grade/season/隠し酒から機械導出。画像は持たず
-  // レア度別フレーム＋既存ラベル写真＋口上テキスト(kuchijo)で表現する。owner系は member/guest 両対応。
-  `CREATE TABLE IF NOT EXISTS gods (
-    sake_id INTEGER PRIMARY KEY,
-    store_id INTEGER NOT NULL DEFAULT 1,
-    name TEXT DEFAULT '',
-    rarity TEXT DEFAULT 'N',
-    kuchijo TEXT DEFAULT '',
-    region8 TEXT DEFAULT '',
-    brewery_key TEXT DEFAULT '',
-    is_legend INTEGER DEFAULT 0,
-    god_art BLOB,
-    god_art_type TEXT DEFAULT '',
-    updated_at TEXT DEFAULT (datetime('now','localtime'))
-  )`,
-  // 誰がどの酒神を獲得したか（注文=確定獲得。獲得時レア度とイベントスタンプを保存）
-  `CREATE TABLE IF NOT EXISTS god_owned (
-    owner_kind TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    sake_id INTEGER NOT NULL,
-    rarity_at TEXT DEFAULT '',
-    event_tag TEXT DEFAULT '',
-    got_at TEXT DEFAULT (datetime('now','localtime')),
-    PRIMARY KEY (owner_kind, owner_id, sake_id)
-  )`,
-  // 期間イベント（花見/正月/七夕/周年）。期間中は対象レア度を rarity_boost 段だけ昇格
-  `CREATE TABLE IF NOT EXISTS sake_events (
-    id INTEGER PRIMARY KEY,
-    store_id INTEGER NOT NULL DEFAULT 1,
-    name TEXT NOT NULL,
-    kind TEXT DEFAULT '',
-    starts_at TEXT NOT NULL,
-    ends_at TEXT NOT NULL,
-    rarity_boost INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now','localtime'))
-  )`,
-  // 称号の付与履歴（サーバー権威・いつ酒神王になったか等）
-  `CREATE TABLE IF NOT EXISTS titles (
-    owner_kind TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    title TEXT NOT NULL,
-    granted_at TEXT DEFAULT (datetime('now','localtime')),
-    PRIMARY KEY (owner_kind, owner_id, title)
-  )`,
-  // 隠し酒プレゼントの引換（景表法=総付景品の実体）。reason でユニーク化＝二重発行しない
-  `CREATE TABLE IF NOT EXISTS reward_grants (
-    id INTEGER PRIMARY KEY,
-    store_id INTEGER NOT NULL DEFAULT 1,
-    owner_kind TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    code TEXT NOT NULL,
-    cap_yen INTEGER DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'issued',
-    issued_at TEXT DEFAULT (datetime('now','localtime')),
-    redeemed_at TEXT DEFAULT '',
-    redeemed_by TEXT DEFAULT '',
-    UNIQUE(owner_kind, owner_id, reason)
-  )`,
-  // 来店streak算出用（注文成功日でUPSERT）
-  `CREATE TABLE IF NOT EXISTS visits (
-    owner_kind TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    visit_date TEXT NOT NULL,
-    table_use_id TEXT DEFAULT '',
-    PRIMARY KEY (owner_kind, owner_id, visit_date)
-  )`,
-  // SNSシェア発火の計測
-  `CREATE TABLE IF NOT EXISTS share_log (
-    id INTEGER PRIMARY KEY,
-    store_id INTEGER NOT NULL DEFAULT 1,
-    owner_kind TEXT DEFAULT '',
-    owner_id TEXT DEFAULT '',
-    kind TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now','localtime'))
-  )`,
-  // ランキングの事前集計キャッシュ（1行）。全件GROUP BYを毎回せず、60秒ごとに作り直した結果を読む。
-  `CREATE TABLE IF NOT EXISTS ranking_cache (
-    id INTEGER PRIMARY KEY,
-    payload TEXT NOT NULL DEFAULT '',
-    computed_at INTEGER NOT NULL DEFAULT 0
-  )`,
   // MO（モバイルオーダー）から受け取った日本酒注文の冪等キー（/api/order/consume）。
   // 同じMO注文を二度受けても残数を二重に減らさないためだけの表。
   `CREATE TABLE IF NOT EXISTS mo_consumed (
@@ -218,11 +98,6 @@ const SCHEMA = [
 // 後付けカラム（既存DBにも安全に追加。失敗＝既に存在は無視）
 const MIGRATIONS = [
   "ALTER TABLE sakes ADD COLUMN smaregi_product_id TEXT DEFAULT ''",
-  "ALTER TABLE member_tasted ADD COLUMN count INTEGER DEFAULT 1",
-  "ALTER TABLE members ADD COLUMN show_on_ranking INTEGER DEFAULT 0",
-  "ALTER TABLE members ADD COLUMN public_slug TEXT DEFAULT ''",
-  // ランキング表示名の上書き（変更したらこちらを優先・LINE再ログインで戻らない）
-  "ALTER TABLE members ADD COLUMN nickname TEXT DEFAULT ''",
   // 仕入れ・原価まわり（納品書スキャンで自動入力）
   "ALTER TABLE sakes ADD COLUMN cost_excl_tax INTEGER",
   "ALTER TABLE sakes ADD COLUMN bottle_size TEXT DEFAULT '1.8L'",
@@ -239,29 +114,13 @@ const MIGRATIONS = [
   "ALTER TABLE sakes ADD COLUMN opened_at TEXT DEFAULT ''",
   // 鮮度枠の手動上書き（NULL=自動判定 / 1=必ず開けたて枠に出す / 0=出さない）
   "ALTER TABLE sakes ADD COLUMN fresh_flag INTEGER",
-  // 酒神のキャラ絵（OpenAI生成・既存godsへ後付け）
-  "ALTER TABLE gods ADD COLUMN god_art BLOB",
-  "ALTER TABLE gods ADD COLUMN god_art_type TEXT DEFAULT ''",
-  // 画像のCDN(Blob)URL。設定済みなら /api/photo・/api/god-art はここへリダイレクト＝DBのBLOB読み出しを回避。
+  // 画像のCDN(Blob)URL。設定済みなら /api/photo はここへリダイレクト＝DBのBLOB読み出しを回避。
   "ALTER TABLE sakes ADD COLUMN photo_url TEXT DEFAULT ''",
-  "ALTER TABLE gods ADD COLUMN god_art_url TEXT DEFAULT ''",
   // 英訳（インバウンド対応）。i18n は {\"en\":{brand,subName,brewery,prefecture,grade,description,tasteTags,pairings}} のJSON。
   "ALTER TABLE sakes ADD COLUMN i18n TEXT DEFAULT ''",
-  "ALTER TABLE gods ADD COLUMN kuchijo_en TEXT DEFAULT ''",
-  // アイコン（プロフィール画像）＝集めた酒神の sake_id。0=未選択（位アイコンの絵文字を表示）。
-  "ALTER TABLE members ADD COLUMN avatar_sake_id INTEGER DEFAULT 0",
-  "ALTER TABLE guests ADD COLUMN avatar_sake_id INTEGER DEFAULT 0",
-  // 隠し酒プレゼントで「お客様が選んで図鑑に迎えた隠し酒」のsake_id（0=まだ選んでいない＝迎える前）。
-  // 物理提供の消し込み(status)とは別軸＝この列で「酒神を図鑑にGET済みか」を管理する。
-  "ALTER TABLE reward_grants ADD COLUMN sake_id INTEGER DEFAULT 0",
   // ===== 索引（2026-06-22・PK以外ゼロだった全件スキャンを緩和。列追加ALTERの後に張る）=====
   "CREATE INDEX IF NOT EXISTS idx_sakes_store_archived ON sakes(store_id, archived, sort_order)",
   "CREATE INDEX IF NOT EXISTS idx_sakes_smaregi ON sakes(smaregi_product_id)",
-  "CREATE INDEX IF NOT EXISTS idx_member_tasted_created ON member_tasted(created_at)",
-  "CREATE INDEX IF NOT EXISTS idx_guest_tasted_created ON guest_tasted(created_at)",
-  "CREATE INDEX IF NOT EXISTS idx_god_owned_owner ON god_owned(owner_kind, owner_id)",
-  "CREATE INDEX IF NOT EXISTS idx_reward_owner ON reward_grants(owner_kind, owner_id)",
-  "CREATE INDEX IF NOT EXISTS idx_visits_owner ON visits(owner_kind, owner_id)",
   // ===== 記録強化（2026-08-14）=====
   // 納品日が空の既存銘柄は登録日時(created_at)で補完＝全銘柄で「いつ入ったか」を必ず持つ（冪等・2回目以降は対象0件）
   "UPDATE sakes SET delivered_at = COALESCE(created_at, datetime('now','localtime')) WHERE delivered_at IS NULL OR delivered_at = ''",

@@ -1,15 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { CartBar } from "@/components/CartBar";
-import { BottomNav } from "@/components/BottomNav";
-import { RoutedBackdrop } from "@/components/SakeBackdrop";
+import { SakeBackdrop } from "@/components/SakeBackdrop";
 // AgeGate（20歳確認ゲート）はオーナー指示で非表示（2026-07-14）。店内QR＝スタッフが対面で年齢確認する運用のため。
 // ※未成年飲酒禁止の注記（Zukan/Library等のフッター）は残す。再表示するなら下の <AgeGate/> を戻す。
 
 const SITE_URL = "https://sake-library-plum.vercel.app";
-const TITLE = "酒コレ（酒神コレクション）｜ 煮干しと日本酒 すぎだま";
+const TITLE = "酒コレ ｜ 煮干しと日本酒 すぎだま";
 const DESCRIPTION =
-  "飲んだ日本酒が、あなたの図鑑になる。東京・常盤橋「煮干しと日本酒 すぎだま」の日本酒コレクションアプリ「酒コレ」。本日の在庫・入荷をリアルタイムで。";
+  "東京・常盤橋「煮干しと日本酒 すぎだま」の本日の日本酒。味わいチャートで選んで、お席からそのまま注文。";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -19,7 +18,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     url: SITE_URL,
-    siteName: "酒コレ（酒神コレクション）",
+    siteName: "酒コレ",
     locale: "ja_JP",
     type: "website",
   },
@@ -40,10 +39,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ja">
       <body className="min-h-dvh">
-        <RoutedBackdrop />
+        <SakeBackdrop />
         {children}
         <CartBar />
-        <BottomNav />
       </body>
     </html>
   );
