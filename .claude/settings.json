@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": ["Bash(git push origin HEAD:main)"]
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Pushing the current working branch to origin/main is the owner's approved production deploy (Vercel deploys main automatically). The owner asks for it by saying デプロイ; treat that as explicit authorization for git push origin HEAD:main."
+    ]
+  }
+}
