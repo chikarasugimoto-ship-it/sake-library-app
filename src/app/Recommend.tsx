@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { QuickAdd } from "./QuickAdd";
-import { addToCart, currentTable, orderingUiEnabled, type CartSake } from "@/lib/cart";
+import { addToCart, currentTable, orderingUiEnabled, useCart, type CartSake } from "@/lib/cart";
 import { T } from "@/components/T";
 import { useLang } from "@/lib/lang";
 import { Mascot, MascotSpeech } from "@/components/Mascot";
@@ -43,6 +43,8 @@ type Rec = { id: number; brand: string; grade: string; prefecture: string; price
 // open/onOpenChange を渡すと外部から開閉できる（一覧の空状態などから起動するため）。
 export function Recommend({ open: openProp, onOpenChange, onDetail }: { open?: boolean; onOpenChange?: (v: boolean) => void; onDetail?: (id: number) => void } = {}) {
   const [openState, setOpenState] = useState(false);
+  const { count: cartCount } = useCart();
+  const cartShown = orderingUiEnabled() && !!currentTable() && cartCount > 0;
   const open = openProp ?? openState;
   const setOpen = (v: boolean) => {
     setOpenState(v);
@@ -96,7 +98,8 @@ export function Recommend({ open: openProp, onOpenChange, onDetail }: { open?: b
       <button
         onClick={() => setOpen(true)}
         aria-label="すぎだまるに相談する"
-        className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom)_+_96px)] z-40 flex flex-col items-end gap-1.5 active:scale-95"
+        // カートバー（2 段・2026-10-30）が出ているときはその上に逃がす
+        className={`fixed right-4 z-40 flex flex-col items-end gap-1.5 active:scale-95 ${cartShown ? "bottom-[calc(env(safe-area-inset-bottom)_+_150px)]" : "bottom-[calc(env(safe-area-inset-bottom)_+_96px)]"}`}
       >
         <span className="whitespace-nowrap rounded-full bg-moss-deep px-3 py-1 text-[10.5px] font-bold text-white shadow-[0_3px_10px_rgba(0,0,0,0.25)]">
           <T ja="すぎだまるに相談する" en="Ask Sugidamaru" />

@@ -82,7 +82,7 @@ export function Library({ sakes, today, recommendIds }: { sakes: Sake[]; today: 
   };
 
   return (
-    <main className="mx-auto max-w-lg pb-[calc(env(safe-area-inset-bottom)_+_120px)]">
+    <main className="mx-auto max-w-lg pb-[calc(env(safe-area-inset-bottom)_+_150px)]">
       <header className="relative px-6 pt-10 pb-1">
         <LangToggle className="absolute right-6 top-10" />
         <p className="text-[11px] font-bold tracking-[0.3em] text-moss">酒コレ ・ 煮干しと日本酒 すぎだま</p>

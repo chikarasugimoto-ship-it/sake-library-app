@@ -22,6 +22,19 @@ export function CartBar() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [msg, setMsg] = useState("");
   const [done, setDone] = useState<Done | null>(null);
+  // 杯数が増えた直後の「入れました」表示（2026-10-30 オーナー指摘「この部分が気づかない」）。
+  // 一覧に戻ったときにバーが跳ねて、上に小さな確認が 2 秒出る
+  const [flash, setFlash] = useState(0);
+  const [prevCount, setPrevCount] = useState(count);
+  if (count !== prevCount) {
+    setPrevCount(count);
+    if (count > prevCount) setFlash(Date.now());
+  }
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(0), 2200);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   // お礼の表示は数秒で自動的に閉じる（残り続けない）
   useEffect(() => {
@@ -102,20 +115,40 @@ export function CartBar() {
 
   return (
     <>
-      {/* フッターバー */}
-      <button
-        onClick={() => setOpen(true)}
-        className="fixed inset-x-0 bottom-0 z-40 mx-auto flex max-w-lg items-center justify-between rounded-t-2xl bg-moss px-6 pb-[calc(env(safe-area-inset-bottom)_+_16px)] pt-4 text-white shadow-[0_-3px_16px_rgba(0,0,0,0.20)]"
+      {/* フッターバー（2 段: 上に杯数と金額、下に大きな金色の「注文を確認する」ボタン。
+          薄い緑の画面に対して濃い緑＋金で目立たせる。追加直後は跳ねて「カートに入れました」が出る） */}
+      <div
+        key={flash || "bar"}
+        className={`fixed inset-x-0 bottom-0 z-40 mx-auto max-w-lg rounded-t-3xl bg-moss-deep px-4 pb-[calc(env(safe-area-inset-bottom)_+_14px)] pt-3 text-white shadow-[0_-6px_24px_rgba(0,0,0,0.35)] ${flash ? "cartbar-pop" : ""}`}
+        style={{ boxShadow: "0 -6px 24px rgba(0,0,0,.35), inset 0 1px 0 #caa86a66" }}
       >
-        <span className="text-sm font-bold">
-          <T ja={`${count}杯 をカートに`} en={`${count} ${count === 1 ? "drink" : "drinks"} in cart`} />
-          <span className="ml-2 font-normal text-white/80"><T ja={`${table}卓`} en={`Table ${table}`} /></span>
-        </span>
-        <span className="flex items-center gap-3">
-          <span className="font-bold">¥{total.toLocaleString()}</span>
-          <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-bold"><T ja="確認する ›" en="Review ›" /></span>
-        </span>
-      </button>
+        {flash ? (
+          <div className="pointer-events-none absolute inset-x-0 -top-12 flex justify-center">
+            <div className="whitespace-nowrap rounded-full bg-[#caa86a] px-4 py-1.5 text-[13px] font-extrabold text-[#16352a] shadow-[0_4px_14px_rgba(0,0,0,.3)] cartbar-toast">
+              ✓ <T ja="カートに入れました" en="Added to cart" />
+            </div>
+          </div>
+        ) : null}
+        <button onClick={() => setOpen(true)} className="flex w-full items-center justify-between px-1 pb-2.5 text-left">
+          <span className="flex items-center gap-2.5">
+            <span className="relative flex h-9 w-9 items-center justify-center rounded-full bg-white/12 text-[20px]">
+              🍶
+              <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#caa86a] px-1 text-[11px] font-extrabold text-[#16352a]">{count}</span>
+            </span>
+            <span className="text-[15px] font-extrabold">
+              <T ja={`${count}杯 カートに入っています`} en={`${count} ${count === 1 ? "drink" : "drinks"} in your cart`} />
+              <span className="ml-2 text-[12px] font-normal text-white/70"><T ja={`${table}卓`} en={`Table ${table}`} /></span>
+            </span>
+          </span>
+          <span className="text-[16px] font-extrabold tabular-nums">¥{total.toLocaleString()}</span>
+        </button>
+        <button
+          onClick={() => setOpen(true)}
+          className="flex w-full items-center justify-center gap-2 rounded-full bg-[#caa86a] py-3.5 text-[15px] font-extrabold tracking-wider text-[#16352a] shadow-[0_3px_0_#8a6f3f] active:translate-y-[2px] active:shadow-none"
+        >
+          <T ja="注文内容を確認する" en="Review & order" /> ›
+        </button>
+      </div>
 
       {/* ドロワー */}
       {open && (
