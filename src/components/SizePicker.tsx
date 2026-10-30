@@ -16,17 +16,22 @@ export function SizePicker({
   kanOk = false,
   open,
   onClose,
+  onDone,
 }: {
   sake: CartSake;
   kanOk?: boolean;
   open: boolean;
   onClose: () => void;
+  // 「OK（カートへ）」を押したとき。引数はこの銘柄のカート内の杯数（サイズ横断）。
+  // 省略時は onClose と同じ。詳細シートからは「追加できたら一覧へ戻る」に使う（2026-10-30）
+  onDone?: (count: number) => void;
 }) {
   const { lines } = useCart();
   if (!open) return null;
 
   const sizes: SakeSize[] = kanOk ? ["glass", "go", "kan"] : ["glass", "go"];
   const qtyOf = (size: SakeSize) => lines.find((l) => l.key === cartKey(sake.id, size))?.qty ?? 0;
+  const total = sizes.reduce((n, size) => n + qtyOf(size), 0);
 
   const stop = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -121,7 +126,8 @@ export function SizePicker({
         <button
           onClick={(e) => {
             stop(e);
-            onClose();
+            if (onDone) onDone(total);
+            else onClose();
           }}
           className="mt-4 w-full rounded-full bg-moss-deep py-3.5 text-[14px] font-bold text-white active:scale-[0.99]"
         >

@@ -160,6 +160,13 @@ export function SakeSheet({ sake: s, onClose }: { sake: Sake | null; onClose: ()
         kanOk={s.kanOk}
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
+        // 「OK（カートへ）」: 1 杯でも入っていれば詳細シートごと閉じて一覧へ戻る（下のカートバーに杯数が出る）。
+        // 何も選ばずに OK なら詳細に留まる。以前はサイズ選択だけ閉じて詳細に戻るので「追加されたか分からない」と
+        // オーナー指摘（2026-10-30）
+        onDone={(count) => {
+          setPickerOpen(false);
+          if (count > 0) onClose();
+        }}
       />
     </div>
   );
