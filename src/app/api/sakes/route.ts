@@ -42,6 +42,13 @@ export async function GET(req: NextRequest) {
       goOk: canOrderGo(s.stockCount),
       status: s.status,
       updatedAt: s.updatedAt,
+      // 味わいの手がかり（2026-11-20）。MO の飲み放題 POP が、銘柄ごとの一言（季節限定・辛口 など）を決めるのに使う。
+      // どれもお客様向けの画面にすでに出している内容＝公開してよい。古い MO は読まないだけ
+      seasonLabel: s.seasonLabel,
+      tasteTags: s.tasteTags,
+      tasteChart: s.tasteChart,
+      isBeginner: s.isBeginner,
+      freshSensitive: s.freshSensitive,
       en: s.en,
     };
   });
