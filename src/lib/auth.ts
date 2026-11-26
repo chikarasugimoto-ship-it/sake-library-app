@@ -5,7 +5,9 @@ import { PASSWORD_REQUIRED } from "./staff-login";
 
 export const STAFF_COOKIE = "sksl_staff";
 
-export function hashPassword(pw: string): string {
+// 2 つの文字列を、長さのちがいで時間差が出ないように比べるための、短い印（sha256）。
+// ⚠ パスワードの保存には使わない。前はこれをそのまま DB に入れていた（鍵なし）。いまの保存の形は、下の passwordHashFor
+function sha256Pw(pw: string): string {
   return createHash("sha256").update("sksl.staff.v1:" + pw).digest("hex");
 }
 
@@ -60,6 +62,45 @@ export function signStaff(id: number, role: string): string {
   if (sig == null) throw new Error("STAFF_COOKIE_SECRET か ADMIN_PASSWORD が要ります（本番では、開発用の鍵でログインの印を作らない）");
   return `${body}.${sig}`;
 }
+// ---- パスワードの保存の形（パスワードありの設定のときだけ使う）----
+// 形: 「k2.」＋ HMAC(鍵, 名前とパスワード)。鍵は、ログインの印（pw2）と同じもと（STAFF_COOKIE_SECRET、無ければ ADMIN_PASSWORD）から作る。
+//
+// なぜ、鍵を入れるか（2026-11-27。4fd1102 のレビューの指摘 1〜3 を、根本から直した）:
+//   パスワードなしのあいだは、だれでも管理者として入れた。古いデプロイ（古いコードのまま、同じ DB で動く）は、
+//   前の形の印を受け付け、パスワードの入れ直しもできる。そこで入れられたパスワードを、戻したあとで通してはいけない。
+//   前の直しは「戻した最初のログインで、全員のパスワードを空にする」だった。これには穴があった:
+//     ・空にしたあと、古いデプロイを消すまでのあいだに、古いデプロイからパスワードを入れ直せる（レビューで実際にできた）
+//     ・「もう空にした」の印が DB に 1 つだけ＝プレビューのデプロイなどが先に踏むと、本番に戻したときには空にならない
+//     ・ADMIN_PASSWORD が無い・短いときも空にしてしまい、だれも入れなくなる
+//   いまの形は、**何も消さない**。「いまの鍵で作ったもの」だけを通す:
+//     ・前の形（鍵なしの sha256）のパスワードは、どれも通らない＝戻したら、全員、入れ直しになる（空にしたのと同じ結果）
+//     ・古いデプロイ・前の形のコードが書いたパスワードは、いつ書かれても通らない（鍵を知らないので、この形を作れない）
+//     ・鍵のもとを入れ替えると、ログインの印もパスワードも、まとめて無効になる（＝全員を締め出して、やり直す手段）
+//   名前を入れているのは、同じパスワードの人どうしで、保存した値が同じにならないようにするため。
+//   ⚠ 名前を変える機能を足すときは、変えた人のパスワードを入れ直すこと（保存した値が合わなくなる）
+const PW_PREFIX = "k2.";
+/** パスワードを保存する形にする。null = 作れない（本番で env が 1 つも無い） */
+export function passwordHashFor(name: string, password: string): string | null {
+  const base = pwKey();
+  if (base == null) return null;
+  const key = createHmac("sha256", base).update("sksl.staff.pwhash.key.v2").digest(); // 印の署名とは別の鍵にする
+  return PW_PREFIX + createHmac("sha256", key).update(`sksl.staff.pw.v2\n${name}\n${password}`).digest("base64url");
+}
+/** 保存してある値と、入力が合うか。前の形・空・鍵がちがうものは、合わない */
+export function passwordMatches(name: string, stored: string, password: string): boolean {
+  if (!stored || !stored.startsWith(PW_PREFIX) || !password) return false;
+  const want = passwordHashFor(name, password);
+  if (want == null) return false;
+  const a = Buffer.from(want), b = Buffer.from(stored);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+/** いまの形のパスワードが入っているか（中身が合うかは見ない。「まだ入っていません」の案内に使う） */
+const hasNewPassword = (stored: string) => !!stored && stored.startsWith(PW_PREFIX);
+/** パスワードありの設定で、ログインの印を出せるか（本番で env が 1 つも無いと、出せない） */
+export function canIssuePasswordSession(): boolean {
+  return pwKey() != null;
+}
+
 export function verifyStaffCookie(cookie?: string): StaffSession | null {
   if (!cookie) return null;
   const parts = cookie.split(".");
@@ -100,13 +141,13 @@ type StaffRow = { id: number; name: string; pass_hash: string; role: string };
 // 2026-11-26: パスワードは、入れない（空）。前は、杉本以外に、決まった仮パスワードを入れていた。このリポは公開なので、
 // その値はだれでも読める＝表が空になって入れ直されると、パスワードありの設定で、その 3 人として入れてしまう（レビュー指摘）。
 // 空のスタッフは、パスワードありの設定では入れない（管理者がスタッフ管理の「パスワード初期化」で入れる）。
-// 管理者（杉本）だけは、Vercel の ADMIN_PASSWORD（8 文字以上）があれば、その値を入れる（無ければ空。入れ直せば、その値で入れる＝ownerRecoveryMatches）
+// 管理者（杉本）も空で入れる（2026-11-27）。パスワードありの設定では、Vercel の ADMIN_PASSWORD（8 文字以上）の値で入れて、
+// そのとき、いまの形で保存される（ownerRecoveryMatches）
 export async function ensureStaffSeed(): Promise<void> {
   const cnt = await get<{ n: number }>("SELECT COUNT(*) AS n FROM staff");
   if (cnt && Number(cnt.n) > 0) return;
-  const env = process.env.ADMIN_PASSWORD || "";
   const seed: [string, string, "admin" | "staff"][] = [
-    ["杉本", env.length >= 8 ? hashPassword(env) : "", "admin"],
+    ["杉本", "", "admin"],
     ["長山", "", "staff"],
     ["細田", "", "staff"],
     ["小倉", "", "staff"],
@@ -128,41 +169,40 @@ export function ownerRecoveryMatches(role: string, password: string): boolean {
   if (role !== "admin") return false;
   const env = process.env.ADMIN_PASSWORD || "";
   if (env.length < 8 || !password) return false;
-  return timingSafeEqual(Buffer.from(hashPassword(password)), Buffer.from(hashPassword(env)));
+  return timingSafeEqual(Buffer.from(sha256Pw(password)), Buffer.from(sha256Pw(env)));
 }
 
-// パスワードに戻した最初の 1 回だけ、全員のパスワードを空にする（settings に実行記録を残して、2 回めは何もしない）。
-//  なぜ（2026-11-26 レビュー指摘）: パスワードなしのあいだは、だれでも管理者として入れた。そのあいだに起きたことを、まとめて無効にする
-//   ・Vercel の ADMIN_PASSWORD を入れ替えても、管理者の行には「前の値」のハッシュが残っていて、前の値で入れてしまう
-//   ・前に種で入れていた仮パスワード（公開されている）のままのスタッフが、残っているかもしれない
-//   ・古いデプロイ（パスワードの入れ直しができる版）を通して、だれかがパスワードを入れ直しているかもしれない
-//  空にしたあと: 管理者は、Vercel の ADMIN_PASSWORD（入れ替えた値）で入る（ownerRecoveryMatches。その値が以後のパスワードになる）。
-//  ほかのスタッフは、管理者がスタッフ管理の「パスワード初期化」で入れる（空のままでは入れない）。
-//  パスワードなしの設定のあいだは、何もしない（記録も付けない＝戻したときに、はじめて走る）
-const PW_RESET_KEY = "once_staff_pw_reset_on_password_mode_v1";
-let _pwResetDone = false;
-async function ensurePasswordModeReset(): Promise<void> {
-  if (!PASSWORD_REQUIRED || _pwResetDone) return;
-  // 空にするのは、記録が無いときだけ（1 文で確かめる）。記録を付けたあとに入れたパスワードは、遅れてきた別の依頼にも消されない
-  await run("UPDATE staff SET pass_hash = '' WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)", [PW_RESET_KEY]);
-  await run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING", [PW_RESET_KEY, new Date().toISOString()]);
-  _pwResetDone = true;
-}
+// （2026-11-27: 「パスワードに戻した最初の 1 回だけ、全員のパスワードを空にする」は、やめた。理由と、代わりの仕組みは、上の「パスワードの保存の形」）
 
-export async function verifyStaffLogin(name: string, password: string): Promise<StaffSession | null> {
+/** ログインの結果。setup = 設定が終わっていなくて、だれも入れない（Vercel の env を直す）／ hint = この人が入れない理由の案内 */
+export type StaffLoginResult = { ok: true; session: StaffSession } | { ok: false; setup?: string; hint?: string };
+export const LOGIN_SETUP_NO_KEY = "ログインの準備が、まだ終わっていません。Vercel に ADMIN_PASSWORD（8 文字以上）と STAFF_COOKIE_SECRET を入れて、デプロイし直してください。";
+export const LOGIN_SETUP_ADMIN = "管理者のパスワードが、まだ入っていません。Vercel の ADMIN_PASSWORD（8 文字以上）を入れて、デプロイし直すと、その値で入れます。";
+export const LOGIN_HINT_STAFF = "この名前には、まだパスワードが入っていません。管理者に、スタッフ管理の「パスワード初期化」をしてもらってください。";
+
+export async function verifyStaffLogin(name: string, password: string): Promise<StaffLoginResult> {
   await ensureStaffSeed();
-  await ensurePasswordModeReset();
+  // パスワードありの設定で、本番に env が 1 つも無いときは、ログインの印を作れない＝だれも入れない。
+  // DB に何も書かないうちに、そう伝える（前は、パスワードが合ったあとで 500 になり、「入った」の記録だけが残った。レビューの指摘 5）
+  if (PASSWORD_REQUIRED && !canIssuePasswordSession()) return { ok: false, setup: LOGIN_SETUP_NO_KEY };
   const s = await get<StaffRow>("SELECT id, name, pass_hash, role FROM staff WHERE name = ?", [name]);
-  if (!s) return null;
+  if (!s) return { ok: false };
   // パスワードなし（PASSWORD_REQUIRED = false。2026-11-26 オーナー指示）のあいだは、名前が合えば入れる。
-  // パスワードは見ない・書きかえない（戻したときに、前のパスワードがそのまま使えるように）
-  if (PASSWORD_REQUIRED && (!s.pass_hash || s.pass_hash !== hashPassword(password))) {
-    // 管理者がパスワードを忘れたときの復旧（2026-11-18）。他のスタッフは管理者が戻せるが、管理者本人は戻す人がいない。
-    // Vercel の ADMIN_PASSWORD を新しい値に入れ直す → その値で管理者としてログインでき、以後のパスワードもその値になる。
+  // パスワードは見ない・書きかえない
+  if (PASSWORD_REQUIRED && !passwordMatches(s.name, s.pass_hash, password)) {
+    // 管理者がパスワードを忘れたときの復旧（2026-11-18）・パスワードに戻したあとの、管理者の最初の入口。
+    // Vercel の ADMIN_PASSWORD の値で管理者としてログインでき、以後のパスワードもその値になる（いまの形で保存する）。
     // env を書き換えられるのは Vercel に入れる人だけ。env が未設定・短すぎる（8 文字未満）ときは使えない（開発既定値では通さない）。
-    if (!ownerRecoveryMatches(s.role, password)) return null;
-    await run("UPDATE staff SET pass_hash = ? WHERE id = ?", [hashPassword(password), s.id]);
+    if (!ownerRecoveryMatches(s.role, password)) {
+      if (hasNewPassword(s.pass_hash)) return { ok: false };
+      // いまの形のパスワードが、まだ入っていない人（パスワードに戻した直後は、全員こうなる）。入れない理由を伝える
+      if (s.role === "admin") return (process.env.ADMIN_PASSWORD || "").length >= 8 ? { ok: false } : { ok: false, setup: LOGIN_SETUP_ADMIN };
+      return { ok: false, hint: LOGIN_HINT_STAFF };
+    }
+    const h = passwordHashFor(s.name, password);
+    if (h == null) return { ok: false, setup: LOGIN_SETUP_NO_KEY };
+    await run("UPDATE staff SET pass_hash = ? WHERE id = ?", [h, s.id]);
   }
   await run("UPDATE staff SET last_login = datetime('now','localtime') WHERE id = ?", [s.id]);
-  return { id: s.id, role: s.role === "admin" ? "admin" : "staff" };
+  return { ok: true, session: { id: s.id, role: s.role === "admin" ? "admin" : "staff" } };
 }

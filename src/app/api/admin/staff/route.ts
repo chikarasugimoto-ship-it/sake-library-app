@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { all, get, run, audit } from "@/lib/db";
-import { isOwner, hashPassword, ensureStaffSeed } from "@/lib/auth";
+import { isOwner, passwordHashFor, ensureStaffSeed, LOGIN_SETUP_NO_KEY } from "@/lib/auth";
 import { PASSWORD_REQUIRED } from "@/lib/staff-login";
 
 async function adminCount(): Promise<number> {
@@ -31,7 +31,10 @@ export async function POST(req: NextRequest) {
   const exists = await get("SELECT id FROM staff WHERE name = ?", [name]);
   if (exists) return NextResponse.json({ error: "同じ名前のスタッフがいます" }, { status: 409 });
   const role = b.role === "admin" ? "admin" : "staff";
-  await run("INSERT INTO staff (name, pass_hash, role) VALUES (?, ?, ?)", [name, PASSWORD_REQUIRED ? hashPassword(password) : "", role]);
+  // パスワードは、いまの鍵で作った形で保存する（auth.ts の passwordHashFor。作れない＝本番で env が無いときは、足さない）
+  const hash = PASSWORD_REQUIRED ? passwordHashFor(name, password) : "";
+  if (hash == null) return NextResponse.json({ error: LOGIN_SETUP_NO_KEY }, { status: 503 });
+  await run("INSERT INTO staff (name, pass_hash, role) VALUES (?, ?, ?)", [name, hash, role]);
   await audit("staff.add", { name, role });
   return NextResponse.json({ ok: true });
 }
@@ -41,15 +44,18 @@ export async function PATCH(req: NextRequest) {
   if (!(await isOwner())) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const b = (await req.json()) as { id?: number; password?: string; role?: string };
   const id = Number(b.id);
-  const target = await get<{ id: number; role: string }>("SELECT id, role FROM staff WHERE id = ?", [id]);
+  if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "id が要ります" }, { status: 400 });
+  const target = await get<{ id: number; name: string; role: string }>("SELECT id, name, role FROM staff WHERE id = ?", [id]);
   if (!target) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   if (typeof b.password === "string") {
     // パスワードなしの設定（2026-11-26〜）のあいだは、保存してあるパスワードを書きかえさせない（画面にも出していない）。
-    // だれでも管理者として入れるあいだに書きかえられると、パスワードに戻したとき、スタッフが前のパスワードで入れなくなる
+    // だれでも管理者として入れるあいだは、パスワードを入れる口を開けない（パスワードに戻すと、前のパスワードはどれも通らず、全員、入れ直しになる）
     if (!PASSWORD_REQUIRED) return NextResponse.json({ error: "いまは、パスワードなしの設定です（パスワードは変えられません）" }, { status: 409 });
     if (b.password.length < 4) return NextResponse.json({ error: "パスワードは4文字以上にしてください" }, { status: 400 });
-    await run("UPDATE staff SET pass_hash = ? WHERE id = ?", [hashPassword(b.password), id]);
+    const hash = passwordHashFor(target.name, b.password);
+    if (hash == null) return NextResponse.json({ error: LOGIN_SETUP_NO_KEY }, { status: 503 });
+    await run("UPDATE staff SET pass_hash = ? WHERE id = ?", [hash, id]);
     await audit("staff.resetpw", { id });
   }
   if (b.role === "admin" || b.role === "staff") {
@@ -63,7 +69,12 @@ export async function PATCH(req: NextRequest) {
       "UPDATE staff SET role = ? WHERE id = ? AND (? <> 'staff' OR role <> 'admin' OR (SELECT COUNT(*) FROM staff WHERE role = 'admin') > 1)",
       [b.role, id, b.role]
     );
-    if (upd.rowsAffected < 1) return NextResponse.json({ error: "管理者が0人になるため変更できません" }, { status: 409 });
+    if (upd.rowsAffected < 1) {
+      // 書きかえられなかった理由を、読み直して見分ける（同時に消されていた → 404。最後の管理者だった → 409。レビューの指摘 6）
+      const still = await get("SELECT id FROM staff WHERE id = ?", [id]);
+      if (!still) return NextResponse.json({ error: "not found" }, { status: 404 });
+      return NextResponse.json({ error: "管理者が0人になるため変更できません" }, { status: 409 });
+    }
     await audit("staff.role", { id, role: b.role });
   }
   return NextResponse.json({ ok: true });
@@ -74,6 +85,7 @@ export async function DELETE(req: NextRequest) {
   if (!(await isOwner())) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const b = (await req.json()) as { id?: number };
   const id = Number(b.id);
+  if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "id が要ります" }, { status: 400 });
   const target = await get<{ id: number; role: string }>("SELECT id, role FROM staff WHERE id = ?", [id]);
   if (!target) return NextResponse.json({ error: "not found" }, { status: 404 });
   if (target.role === "admin" && (await adminCount()) <= 1) {
@@ -85,7 +97,12 @@ export async function DELETE(req: NextRequest) {
     "DELETE FROM staff WHERE id = ? AND (role <> 'admin' OR (SELECT COUNT(*) FROM staff WHERE role = 'admin') > 1)",
     [id]
   );
-  if (del.rowsAffected < 1) return NextResponse.json({ error: "最後の管理者は削除できません" }, { status: 409 });
+  if (del.rowsAffected < 1) {
+    // 消せなかった理由を、読み直して見分ける（同時に消されていた → 404。最後の管理者だった → 409）
+    const still = await get("SELECT id FROM staff WHERE id = ?", [id]);
+    if (!still) return NextResponse.json({ error: "not found" }, { status: 404 });
+    return NextResponse.json({ error: "最後の管理者は削除できません" }, { status: 409 });
+  }
   await audit("staff.delete", { id });
   return NextResponse.json({ ok: true });
 }

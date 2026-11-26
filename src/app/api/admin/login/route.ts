@@ -19,20 +19,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "しばらく待ってからお試しください" }, { status: 429 });
   }
   const { name, password } = (await req.json()) as { name?: string; password?: string };
-  const sess = await verifyStaffLogin(String(name ?? ""), String(password ?? ""));
-  if (!sess) {
+  const r = await verifyStaffLogin(String(name ?? ""), String(password ?? ""));
+  if (!r.ok) {
+    // 設定が終わっていなくて、だれも入れない（Vercel の env）。当て推量の数には入れない
+    if (r.setup) return NextResponse.json({ error: r.setup }, { status: 503 });
     failures++;
     if (failures >= 8) {
       blockedUntil = Date.now() + 60_000;
       failures = 0;
     }
-    return NextResponse.json({ error: PASSWORD_REQUIRED ? "名前またはパスワードが違います" : "その名前のスタッフが見つかりません" }, { status: 401 });
+    return NextResponse.json({ error: r.hint || (PASSWORD_REQUIRED ? "名前またはパスワードが違います" : "その名前のスタッフが見つかりません") }, { status: 401 });
   }
+  const sess = r.session;
   failures = 0;
+  // 印を先に作る（作れないときに、「入った」の記録だけが残らないように。レビューの指摘 5）
+  const cookie = signStaff(sess.id, sess.role);
   // nopw = パスワードなしの設定で入った（2026-11-26〜。あとで「だれが、どう入ったか」を見分けられるように残す）
   await audit("staff.login", PASSWORD_REQUIRED ? { id: sess.id, name } : { id: sess.id, name, nopw: true });
   const res = NextResponse.json({ ok: true, role: sess.role });
-  res.cookies.set(STAFF_COOKIE, signStaff(sess.id, sess.role), {
+  res.cookies.set(STAFF_COOKIE, cookie, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

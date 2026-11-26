@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { currentStaff, hashPassword } from "@/lib/auth";
+import { currentStaff, passwordHashFor, passwordMatches, LOGIN_SETUP_NO_KEY } from "@/lib/auth";
 import { get, run, audit } from "@/lib/db";
 import { PASSWORD_REQUIRED } from "@/lib/staff-login";
 
@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   const s = await currentStaff();
   if (!s) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   // パスワードなしの設定（2026-11-26〜）のあいだは、保存してあるパスワードを書きかえさせない。
-  // だれでも入れるあいだに書きかえられると、パスワードに戻したとき、前のパスワードで入れなくなる
+  // だれでも入れるあいだは、パスワードを入れる口を開けない（パスワードに戻すと、前のパスワードはどれも通らず、全員、入れ直しになる）
   if (!PASSWORD_REQUIRED) return NextResponse.json({ error: "いまは、パスワードなしの設定です（変えるパスワードはありません）" }, { status: 409 });
 
   const b = (await req.json()) as { current?: string; newPassword?: string };
@@ -20,11 +20,13 @@ export async function POST(req: NextRequest) {
     [s.id]
   );
   if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
-  if (row.pass_hash !== hashPassword(String(b.current ?? ""))) {
+  if (!passwordMatches(row.name, row.pass_hash, String(b.current ?? ""))) {
     return NextResponse.json({ error: "現在のパスワードが違います" }, { status: 401 });
   }
+  const hash = passwordHashFor(row.name, newPw);
+  if (hash == null) return NextResponse.json({ error: LOGIN_SETUP_NO_KEY }, { status: 503 });
 
-  await run("UPDATE staff SET pass_hash = ? WHERE id = ?", [hashPassword(newPw), s.id]);
+  await run("UPDATE staff SET pass_hash = ? WHERE id = ?", [hash, s.id]);
   await audit("staff.changepw", { id: s.id });
   return NextResponse.json({ ok: true, name: row.name });
 }
