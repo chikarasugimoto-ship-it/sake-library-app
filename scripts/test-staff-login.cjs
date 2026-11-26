@@ -7,9 +7,12 @@
 //        （next dev でも回るが、DB への書きこみのたびに作り直しが走り、まれに 500 が混ざる。ビルドしたほうが確か）
 //   2) node scripts/test-staff-login.cjs [画面写真を置くフォルダ]
 //        … いまの設定（src/lib/staff-login.ts の PASSWORD_REQUIRED = false）で、名前を押すだけで入れること・保存してあるパスワードは
-//          書きかえられないこと・ログインの印の形（26 項目。data/sake-library.db を消してから始めたときは FRESH=1 を付けると、種の確かめも回る＝27 項目）
-//   3) 「パスワードに戻す」スイッチが効くことまで見るとき: 2) のあと、PASSWORD_REQUIRED を一時的に true にして、ビルドし直して
-//        MODE=pw node scripts/test-staff-login.cjs      （12 項目。終わったら、必ず false に戻す）
+//          書きかえられないこと・ログインの印の形（27 項目。data/sake-library.db を消してから始めたときは FRESH=1 を付けると、種の確かめも回る＝28 項目）
+//   3) 「パスワードに戻す」スイッチが効くことまで見るとき: 2) のあと、PASSWORD_REQUIRED を一時的に true にして、ビルドし直し、
+//      サーバーを ADMIN_PASSWORD=<8 文字以上の、このテストだけの値> を付けて動かして、同じ値を ADMIN_PW に入れて
+//        MODE=pw ADMIN_PW=<同じ値> node scripts/test-staff-login.cjs      （16 項目。終わったら、必ず false に戻す）
+//      ⚠ パスワードありで最初にログインを試すと、ローカルの DB の全員のパスワードが空になる（戻したときの決まり。auth.ts の ensurePasswordModeReset）
+//      ⚠ 「最初の 1 回で空になる」の確かめは、サーバーを立て直した直後の 1 回めにしか通らない（サーバーが「もう済ませた」と覚えるため）。もう一度回すときは、サーバーを立て直す
 //
 // 書きこむ前に、サーバーが「このフォルダのローカルの DB」を見ていることを確かめる（目印の行を DB に直接入れて、サーバーの一覧に出るかを見る）。
 // サーバーが別の DB（本番の Turso など）を見ていたら、何も書かずに止まる（2026-11-26 レビュー指摘）。
@@ -43,11 +46,13 @@ const tryCookie = async (value) => (await fetch(`${BASE}/api/admin/staff`, { hea
 const tryStaffCookie = async (value) => (await fetch(`${BASE}/api/admin/settings`, { headers: { cookie: `sksl_staff=${value}` } })).status;
 /** 前の形（ID.権限.署名）の印。開発用の鍵（env が無いときの決まった値）で、正しく署名したもの。値は、ソースから読む（ここに書き写さない） */
 const legacyCookie = (id) => {
-  const m = /ADMIN_PASSWORD \|\| "([^"]+)"/.exec(fs.readFileSync(path.join(root, "src/lib/auth.ts"), "utf-8"));
+  const m = /\$\{admin \|\| "([^"]+)"\}/.exec(fs.readFileSync(path.join(root, "src/lib/auth.ts"), "utf-8"));
   return m ? `${id}.admin.${hmac(m[1], `${id}.admin`)}` : "";
 };
 /** パスワードなしの設定の印。鍵は、公開してよい決まった文字（src/lib/auth.ts の OPEN_KEY） */
 const nopwCookie = (id) => `nopw.${id}.admin.${hmac("sksl.staff.nopw.v1", `nopw.${id}.admin`)}`;
+/** 種類だけ pw2 にして、公開の鍵で「正しく」署名した印（＝種類の見分け・鍵の使い分けが抜けていると、通ってしまう印） */
+const pw2ByOpenKey = (id) => `pw2.${id}.admin.${hmac("sksl.staff.nopw.v1", `pw2.${id}.admin`)}`;
 const hashes = async () => (await db.execute({ sql: "SELECT name, pass_hash FROM staff WHERE name <> ? ORDER BY id", args: [NEW] })).rows.map((r) => `${r.name}:${String(r.pass_hash).length}:${String(r.pass_hash).slice(0, 6)}`).join("|");
 
 (async () => {
@@ -179,8 +184,8 @@ const hashes = async () => (await db.execute({ sql: "SELECT name, pass_hash FROM
     await e.page.getByRole("heading", { name: "在庫ボード" }).waitFor({ timeout: 30_000 }).catch(() => {});
     check("前の形の印が残っている端末は、入り直さずに、そのまま在庫ボードが開く", new URL(e.page.url()).pathname === "/admin" && (await e.page.locator("body").innerText()).includes("在庫ボード"), e.page.url());
     await e.ctx.close();
-    const kinds =[await tryCookie(nopwCookie(ownerId)), await tryCookie(nopwCookie(ownerId).replace(/^nopw\./, "pw2.")), await tryCookie(nopwCookie(ownerId).slice(0, -4) + "AAAA"), await tryCookie("")];
-    check("パスワードなしの設定の印（nopw）は、受け付ける。パスワードありの種類（pw2）を名のる印・署名が合わない印・空の印は、受け付けない",
+    const kinds = [await tryCookie(nopwCookie(ownerId)), await tryCookie(pw2ByOpenKey(ownerId)), await tryCookie(nopwCookie(ownerId).slice(0, -4) + "AAAA"), await tryCookie("")];
+    check("パスワードなしの設定の印（nopw）は、受け付ける。種類が pw2 の印（署名は公開の鍵で合っている）・署名が合わない印・空の印は、受け付けない",
       kinds.join() === "200,401,401,401", kinds);
     // ---- 7. 最後の管理者は消せない ----
     const d2 = await newCtx();
@@ -211,13 +216,55 @@ const hashes = async () => (await db.execute({ sql: "SELECT name, pass_hash FROM
     await db.execute({ sql: "DELETE FROM staff WHERE name = ?", args: [ADM2] });
     check("消す SQL そのものが、最後の管理者を消さない（手前の数え方を 2 つの依頼が同時に通り抜けても、管理者は 0 人にならない）",
       lone === 0 && loneLeft === 1 && first === 1 && second === 0 && bothLeft === 1, { lone, loneLeft, first, second, bothLeft, sql: delSql ? "読めた" : "読めなかった" });
+    // 「最後の管理者を一般に下げない」も、書きかえる SQL そのもので見る（消す SQL と同じ理由）
+    const roleSql = (/"(UPDATE staff SET role = \?[^"]*)"/.exec(fs.readFileSync(path.join(root, "src/app/api/admin/staff/route.ts"), "utf-8")) || [])[1] || "";
+    const roleOf = async (id) => String((await db.execute({ sql: "SELECT role FROM staff WHERE id = ?", args: [id] })).rows[0]?.role);
+    const demote = async (id) => (roleSql ? Number((await db.execute({ sql: roleSql, args: ["staff", id, "staff"] })).rowsAffected) : -1);
+    const dLone = await demote(ownerId);                                   // 管理者が 1 人だけ → 下がらない（0 行）
+    const dLoneRole = await roleOf(ownerId);
+    await db.execute({ sql: "UPDATE staff SET role = 'admin' WHERE id = ?", args: [ownerId] });
+    await db.execute({ sql: "INSERT INTO staff (name, pass_hash, role) VALUES (?, '', 'admin')", args: [ADM2] });
+    const adm2b = Number((await db.execute({ sql: "SELECT id FROM staff WHERE name = ?", args: [ADM2] })).rows[0].id);
+    const dFirst = await demote(adm2b);                                    // 管理者が 2 人 → 1 人めは下げられる（1 行）
+    const dSecond = await demote(ownerId);                                 // 続けてもう 1 人 → 下がらない（0 行）
+    const dAdmins = await adminsNow();
+    const promote = roleSql ? Number((await db.execute({ sql: roleSql, args: ["admin", adm2b, "admin"] })).rowsAffected) : -1; // 上げるのは、いつでもできる
+    await db.execute({ sql: "UPDATE staff SET role = 'admin' WHERE id = ?", args: [ownerId] });
+    await db.execute({ sql: "DELETE FROM staff WHERE name = ?", args: [ADM2] });
+    check("下げる SQL そのものが、最後の管理者を一般に下げない（2 人を同時に下げても、管理者は 0 人にならない）。上げるのは、できる",
+      dLone === 0 && dLoneRole === "admin" && dFirst === 1 && dSecond === 0 && dAdmins === 1 && promote === 1, { dLone, dLoneRole, dFirst, dSecond, dAdmins, promote, sql: roleSql ? "読めた" : "読めなかった" });
     const after = await hashes();
     check("ここまでで、もとのスタッフのパスワード（DB）は、1 つも書きかわっていない（パスワードに戻したとき、前のものが使える）", after === before);
   } else {
     // ---- 「パスワードに戻した」状態（PASSWORD_REQUIRED = true）: 前の画面・前の動きに戻る ----
-    // 準備: 「長山」に、このテストだけの仮のパスワードを入れる（ローカルの DB に直接。ハッシュの作り方は src/lib/auth.ts の hashPassword と同じ）
-    const hash = require("crypto").createHash("sha256").update("sksl.staff.v1:" + TEST_PW).digest("hex");
+    const hashOf = (pw) => require("crypto").createHash("sha256").update("sksl.staff.v1:" + pw).digest("hex"); // src/lib/auth.ts の hashPassword と同じ
+    const tryLogin = (name, password) => fetch(`${BASE}/api/admin/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, password }) }).then(async (r) => ({ status: r.status, j: await r.json().catch(() => ({})) }));
+    const ADMIN_PW = process.env.ADMIN_PW || ""; // サーバーに付けた ADMIN_PASSWORD と同じ値（このテストだけの値。8 文字以上）
+    // ---- 戻した最初の 1 回、全員のパスワードが空になる（無しのあいだに起きたことを、まとめて無効にする）----
+    //  無しのあいだの状態を作る: 管理者に「前の ADMIN_PASSWORD」のハッシュ・スタッフに「前に公開されていた仮パスワード」のつもりのハッシュ。
+    //  「まだ一度も戻していない」状態にするため、実行記録を消す（ローカルの DB だけ）
+    const OLD_ADMIN = "old-admin-value-1234", OLD_TEMP = "old-temp-value";
+    await db.execute({ sql: "DELETE FROM settings WHERE key = 'once_staff_pw_reset_on_password_mode_v1'", args: [] });
+    await db.execute({ sql: "UPDATE staff SET pass_hash = ? WHERE role = 'admin'", args: [hashOf(OLD_ADMIN)] });
+    await db.execute({ sql: "UPDATE staff SET pass_hash = ? WHERE name = '細田'", args: [hashOf(OLD_TEMP)] });
+    if (!(await db.execute({ sql: "SELECT id FROM staff WHERE name = ?", args: [NEW] })).rows[0]) await db.execute({ sql: "INSERT INTO staff (name, pass_hash, role) VALUES (?, '', 'staff')", args: [NEW] });
+    const oldAdmin = await tryLogin("杉本", OLD_ADMIN);
+    const oldTemp = await tryLogin("細田", OLD_TEMP);
+    const emptied = (await db.execute("SELECT COUNT(*) AS n FROM staff WHERE pass_hash <> ''")).rows[0].n;
+    check("戻した最初のログインで、全員のパスワードが空になる。前の ADMIN_PASSWORD・前の仮パスワードでは入れない",
+      oldAdmin.status === 401 && oldTemp.status === 401 && Number(emptied) === 0, [oldAdmin.status, oldTemp.status, Number(emptied)]);
+    if (ADMIN_PW.length >= 8) {
+      const owner = await tryLogin("杉本", ADMIN_PW);
+      const ownerHash = String((await db.execute("SELECT pass_hash FROM staff WHERE role = 'admin' ORDER BY id LIMIT 1")).rows[0].pass_hash);
+      check("管理者は、入れ替えたあとの ADMIN_PASSWORD で入れる（その値が、以後のパスワードになる）", owner.status === 200 && owner.j.role === "admin" && ownerHash === hashOf(ADMIN_PW), [owner.status, owner.j, ownerHash.length]);
+    } else {
+      check("（準備）ADMIN_PW（サーバーの ADMIN_PASSWORD と同じ値・8 文字以上）を付けて回す", false, "MODE=pw ADMIN_PW=<値> で回してください");
+    }
+    // 準備: 「長山」に、このテストだけの仮のパスワードを入れる（管理者が「パスワード初期化」で入れたつもり。ローカルの DB に直接）
+    const hash = hashOf(TEST_PW);
     await db.execute({ sql: "UPDATE staff SET pass_hash = ? WHERE name = '長山'", args: [hash] });
+    await tryLogin("細田", "x");
+    check("空にするのは 1 回だけ（そのあとに入れたパスワードは、次のログインで消えない）", String((await db.execute("SELECT pass_hash FROM staff WHERE name = '長山'")).rows[0].pass_hash) === hash);
     const a = await newCtx();
     await a.page.goto(`${BASE}/admin`, { waitUntil: "networkidle" });
     await a.page.getByRole("button", { name: "長山" }).waitFor({ timeout: 20_000 });
@@ -239,6 +286,7 @@ const hashes = async () => (await db.execute({ sql: "SELECT name, pass_hash FROM
     check("戻したとき: パスワードなしのあいだに出した印（nopw）は、もう使えない（管理者の印でも 401）", (await tryCookie(nopwCookie(ownerId))) === 401);
     const legacy = legacyCookie(ownerId);
     check("戻したとき: 前の形（ID.権限.署名）の印も、使えない", !!legacy && (await tryCookie(legacy)) === 401);
+    check("戻したとき: 種類が pw2 でも、公開の鍵で署名した印は使えない（パスワードありの鍵は、env から作る）", (await tryCookie(pw2ByOpenKey(ownerId))) === 401);
     const asStaff2 = ck2 ? await tryStaffCookie(ck2.value) : 0;
     const forged = ck2 ? await tryStaffCookie(ck2.value.replace(/\.staff\./, ".admin.")) : 0;
     check("戻したとき: パスワードで入った印（pw2）は、通る。権限を書きかえた印は、通らない", asStaff2 === 200 && forged === 401, [asStaff2, forged]);

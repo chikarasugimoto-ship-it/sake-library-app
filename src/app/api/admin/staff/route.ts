@@ -57,7 +57,13 @@ export async function PATCH(req: NextRequest) {
     if (target.role === "admin" && b.role === "staff" && (await adminCount()) <= 1) {
       return NextResponse.json({ error: "管理者が0人になるため変更できません" }, { status: 409 });
     }
-    await run("UPDATE staff SET role = ? WHERE id = ?", [b.role, id]);
+    // 「最後の管理者を一般に下げない」を、書きかえる SQL の中でも確かめる（上の数え方だけだと、2 人の管理者を同時に下げたとき、
+    // 2 人とも下がって管理者が 0 人になる。本番の DB は 1 文ごとに通信をはさむので起きうる。2026-11-26 レビュー指摘）
+    const upd = await run(
+      "UPDATE staff SET role = ? WHERE id = ? AND (? <> 'staff' OR role <> 'admin' OR (SELECT COUNT(*) FROM staff WHERE role = 'admin') > 1)",
+      [b.role, id, b.role]
+    );
+    if (upd.rowsAffected < 1) return NextResponse.json({ error: "管理者が0人になるため変更できません" }, { status: 409 });
     await audit("staff.role", { id, role: b.role });
   }
   return NextResponse.json({ ok: true });

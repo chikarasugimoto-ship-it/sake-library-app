@@ -32,24 +32,33 @@ export type StaffSession = { id: number; role: "admin" | "staff" };
 //          当て推量を手元で 1 秒に何十万回も試せてしまう（レビュー指摘）。入口が開いているあいだ、印の署名は何も守っていないので、秘密を使わない
 //   pw2  … STAFF_COOKIE_SECRET（Vercel の env。入れてあれば）。無ければ ADMIN_PASSWORD。どちらも、そのまま鍵にはせず、
 //          時間のかかる計算（scrypt）を通した値を鍵にする（印から当て推量を試すのに、1 回ごとに時間がかかるようにする）
+//          本番で、どちらの env も無いときは、鍵を作らない＝印を出さない・受け付けない（開発用の決まった値は、このリポが公開なので
+//          だれでも読める。それで署名すると、だれでも管理者の印を作れてしまう。2026-11-26 レビュー指摘）
 const KIND = PASSWORD_REQUIRED ? "pw2" : "nopw";
 /** 前の形（3 つ組）の印を通すか。パスワードなしの設定のあいだだけ（パスワードありでは、必ず false） */
 const LEGACY_OK = !PASSWORD_REQUIRED;
 const OPEN_KEY = "sksl.staff.nopw.v1";
 let _pwKey: { from: string; key: Buffer } | null = null;
-function pwKey(): Buffer {
+/** パスワードありの印の鍵。null = 作れない（本番で env が 1 つも無い） */
+function pwKey(): Buffer | null {
   const secret = process.env.STAFF_COOKIE_SECRET || "";
-  const from = secret ? `s:${secret}` : `p:${process.env.ADMIN_PASSWORD || "sugidama-dev-key"}`;
+  const admin = process.env.ADMIN_PASSWORD || "";
+  if (!secret && !admin && process.env.NODE_ENV === "production") return null;
+  const from = secret ? `s:${secret}` : `p:${admin || "sugidama-dev-key"}`;
   if (!_pwKey || _pwKey.from !== from) _pwKey = { from, key: scryptSync(from, "sksl.staff.cookie.v2", 32) };
   return _pwKey.key;
 }
-function mac(body: string): string {
-  return createHmac("sha256", PASSWORD_REQUIRED ? pwKey() : OPEN_KEY).update(body).digest("base64url");
+/** 署名。null = 署名できない（鍵が無い） */
+function mac(body: string): string | null {
+  const key = PASSWORD_REQUIRED ? pwKey() : OPEN_KEY;
+  return key == null ? null : createHmac("sha256", key).update(body).digest("base64url");
 }
 
 export function signStaff(id: number, role: string): string {
   const body = `${KIND}.${id}.${role}`;
-  return `${body}.${mac(body)}`;
+  const sig = mac(body);
+  if (sig == null) throw new Error("STAFF_COOKIE_SECRET か ADMIN_PASSWORD が要ります（本番では、開発用の鍵でログインの印を作らない）");
+  return `${body}.${sig}`;
 }
 export function verifyStaffCookie(cookie?: string): StaffSession | null {
   if (!cookie) return null;
@@ -59,7 +68,9 @@ export function verifyStaffCookie(cookie?: string): StaffSession | null {
   if (parts.length !== 4) return null;
   const [kind, idStr, role, sig] = parts;
   if (kind !== KIND) return null;      // いまの設定とちがう種類の印
-  const want = Buffer.from(mac(`${kind}.${idStr}.${role}`));
+  const expected = mac(`${kind}.${idStr}.${role}`);
+  if (expected == null) return null;   // 鍵が無い（本番で env が無い）→ どの印も受け付けない
+  const want = Buffer.from(expected);
   const got = Buffer.from(sig);
   if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
   return toSession(idStr, role);
@@ -120,8 +131,27 @@ export function ownerRecoveryMatches(role: string, password: string): boolean {
   return timingSafeEqual(Buffer.from(hashPassword(password)), Buffer.from(hashPassword(env)));
 }
 
+// パスワードに戻した最初の 1 回だけ、全員のパスワードを空にする（settings に実行記録を残して、2 回めは何もしない）。
+//  なぜ（2026-11-26 レビュー指摘）: パスワードなしのあいだは、だれでも管理者として入れた。そのあいだに起きたことを、まとめて無効にする
+//   ・Vercel の ADMIN_PASSWORD を入れ替えても、管理者の行には「前の値」のハッシュが残っていて、前の値で入れてしまう
+//   ・前に種で入れていた仮パスワード（公開されている）のままのスタッフが、残っているかもしれない
+//   ・古いデプロイ（パスワードの入れ直しができる版）を通して、だれかがパスワードを入れ直しているかもしれない
+//  空にしたあと: 管理者は、Vercel の ADMIN_PASSWORD（入れ替えた値）で入る（ownerRecoveryMatches。その値が以後のパスワードになる）。
+//  ほかのスタッフは、管理者がスタッフ管理の「パスワード初期化」で入れる（空のままでは入れない）。
+//  パスワードなしの設定のあいだは、何もしない（記録も付けない＝戻したときに、はじめて走る）
+const PW_RESET_KEY = "once_staff_pw_reset_on_password_mode_v1";
+let _pwResetDone = false;
+async function ensurePasswordModeReset(): Promise<void> {
+  if (!PASSWORD_REQUIRED || _pwResetDone) return;
+  // 空にするのは、記録が無いときだけ（1 文で確かめる）。記録を付けたあとに入れたパスワードは、遅れてきた別の依頼にも消されない
+  await run("UPDATE staff SET pass_hash = '' WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)", [PW_RESET_KEY]);
+  await run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING", [PW_RESET_KEY, new Date().toISOString()]);
+  _pwResetDone = true;
+}
+
 export async function verifyStaffLogin(name: string, password: string): Promise<StaffSession | null> {
   await ensureStaffSeed();
+  await ensurePasswordModeReset();
   const s = await get<StaffRow>("SELECT id, name, pass_hash, role FROM staff WHERE name = ?", [name]);
   if (!s) return null;
   // パスワードなし（PASSWORD_REQUIRED = false。2026-11-26 オーナー指示）のあいだは、名前が合えば入れる。
