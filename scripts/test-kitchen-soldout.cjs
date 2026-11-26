@@ -321,6 +321,9 @@ const photo = (extra = {}) => post({ op: "photo", image: IMG, media_type: "image
     queue.push({ kind: "text", text: JSON.stringify({ bottle: true, read: { brand: "飛露喜", sub_name: "", brewery: "" }, matches: [{ id: 109, confidence: 72 }] }) });
     const s3 = await photo();
     check("確信度が 0〜1 の外（72 のような百分率）なら、迷っているとみなす（自動では売り切れにしない）", s3.j.result === "choose" && s3.j.why === "unsure" && (await sake(109)).status === "available", s3.j);
+    queue.push({ kind: "text", text: JSON.stringify({ bottle: true, read: { brand: "飛露喜", sub_name: "", brewery: "" }, matches: [{ id: 109, confidence: 0.95 }, { id: 999001, confidence: 1.3 }] }) });
+    const s3b = await photo();
+    check("…次点の確信度が 0〜1 の外（1.3）でも、次点がいるとみなす（いちばん上が 0.95 でも、自動では売り切れにしない）", s3b.j.result === "choose" && (await sake(109)).status === "available", s3b.j);
     // 瓶が写っていると言っていない
     queue.push(answer({ bottle: false, read: { brand: "飛露喜", sub_name: "", brewery: "" }, matches: [{ id: 109, confidence: 0.96 }] }));
     const s4 = await photo();

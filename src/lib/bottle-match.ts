@@ -118,8 +118,9 @@ export function parseMatchText(text: string): Omit<MatchOk, "ok" | "model"> | nu
     const c = Number((x as { confidence?: unknown }).confidence);
     if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(c)) continue;
     if (matches.some((m) => m.id === id)) continue;
-    // 0〜1 の外（72 のような百分率・負の値）は、意味が分からない＝「迷っている」として扱う（自動では売り切れにしない）
-    matches.push({ id, confidence: c >= 0 && c <= 1 ? c : 0.5 });
+    // 0〜1 の外（72 のような百分率・負の値）は、意味が分からない＝「迷っている」として扱う（自動では売り切れにしない）。
+    // 0.6 にする: いちばん上なら SURE（0.9）に届かない・次点なら NEXT_MAX（0.5）を超える＝どちらの位置でも、自動を止める（0.5 だと、次点のときに止まらなかった）
+    matches.push({ id, confidence: c >= 0 && c <= 1 ? c : 0.6 });
   }
   matches.sort((a, b) => b.confidence - a.confidence);
   return {
