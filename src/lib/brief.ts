@@ -81,11 +81,25 @@ async function todaysSoldouts(): Promise<{ ev: SoldoutEvent; key: string }[]> {
   const rows = await all<{ payload: string; created_at: string }>(
     "SELECT payload, created_at FROM audit_logs WHERE action = 'sake.soldout_event' AND created_at >= datetime('now','localtime','-1 day') ORDER BY id"
   );
+  // 厨房モニターから売り切れにして、「元に戻す」（まちがえた）をしたものは、完売として報告しない（2026-11-27。lib/kitchen-soldout.ts）。
+  // 戻した時刻より前の売切イベントだけを外す（戻したあとで、本当に売り切れたぶんは、報告する）
+  const undone = await all<{ payload: string; created_at: string }>(
+    "SELECT payload, created_at FROM audit_logs WHERE action = 'sake.soldout_undone' AND created_at >= datetime('now','localtime','-1 day') ORDER BY id"
+  ).catch(() => []);
+  const undoneAt = new Map<number, string>();
+  for (const u of undone) {
+    try {
+      const p = JSON.parse(u.payload) as { id?: number };
+      if (p && p.id) undoneAt.set(Number(p.id), String(u.created_at || ""));
+    } catch {}
+  }
   const out: { ev: SoldoutEvent; key: string }[] = [];
   for (const r of rows) {
     try {
       const p = JSON.parse(r.payload) as SoldoutEvent;
       if (!p || !p.id) continue;
+      const u = undoneAt.get(Number(p.id));
+      if (u && String(r.created_at || "") <= u) continue;
       out.push({ ev: p, key: `soldout:${p.id}:${(r.created_at || "").slice(0, 10)}` });
     } catch {}
   }

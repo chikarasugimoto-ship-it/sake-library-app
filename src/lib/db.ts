@@ -93,6 +93,21 @@ const SCHEMA = [
     payload TEXT NOT NULL DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`,
+  // 厨房モニター（KM）から「売り切れ」にした記録（/api/kitchen/soldout。2026-11-27）。
+  // ボトルの写真を撮って売り切れにする機能の、「元に戻す」のための控え（前の状態・開栓日）と、読み取りの記録。
+  // 写真そのものは残さない。
+  `CREATE TABLE IF NOT EXISTS kitchen_soldout (
+    id INTEGER PRIMARY KEY,
+    sake_id INTEGER NOT NULL,
+    how TEXT NOT NULL DEFAULT '',
+    prev_status TEXT NOT NULL DEFAULT 'available',
+    prev_opened_at TEXT NOT NULL DEFAULT '',
+    sold_at TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    undone_at TEXT NOT NULL DEFAULT ''
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_kitchen_soldout_created ON kitchen_soldout(created_at)",
 ];
 
 // 後付けカラム（既存DBにも安全に追加。失敗＝既に存在は無視）
