@@ -31,7 +31,7 @@ const root = process.cwd();
 if (process.env.TURSO_DATABASE_URL) { console.error("本番の DB につながる設定（TURSO_DATABASE_URL）があるので、止めます"); process.exit(1); }
 if (!fs.existsSync(path.join(root, "src/lib/staff-login.ts"))) { console.error("このリポの直下で回してください"); process.exit(1); }
 const PORT = Number(process.env.PORT || 3889);
-const BASE = `http://localhost:${PORT}`;
+const BASE = `http://127.0.0.1:${PORT}`;
 // 写しを置く所。渡されたフォルダ（親）の中に、必ず新しいフォルダを作る。
 // （前は、渡されたフォルダそのものに写して、終わりに丸ごと消していた＝中身のあるフォルダ・このリポの親を渡すと、それごと消えた。確認レビューの指摘）
 const PARENT = path.resolve(process.argv[2] || os.tmpdir());
@@ -93,7 +93,8 @@ async function start(extra) {
   // ほかのものが、このポートを使っていたら、止める（よそのサーバーの返事を、自分のサーバーの返事と取りちがえない）
   if (await answers()) { console.error(`ポート ${PORT} を、ほかのものが使っています。止めてから、もう一度回してください（PORT=別の番号 でも可）`); return false; }
   const log = fs.openSync(path.join(WORK, "server.log"), "a");
-  const p = launch([nextBin(), "start", "-p", String(PORT)], { cwd: WORK, env: { ...baseEnv(), ...extra }, stdio: ["ignore", log, log] });
+  // この PC の中からだけ届く所（127.0.0.1）に立てる。強制終了（SIGKILL）で片づけられずに残っても、外からは触れない
+  const p = launch([nextBin(), "start", "-p", String(PORT), "-H", "127.0.0.1"], { cwd: WORK, env: { ...baseEnv(), ...extra }, stdio: ["ignore", log, log] });
   server = p;
   for (let i = 0; i < 80; i++) {
     await sleep(500);
@@ -108,6 +109,12 @@ async function stop() {
   const p = server; server = null;
   if (p.exitCode == null) { killTree(p, "SIGTERM"); for (let i = 0; i < 40 && p.exitCode == null; i++) await sleep(250); if (p.exitCode == null) killTree(p, "SIGKILL"); }
   for (let i = 0; i < 20 && (await answers()); i++) await sleep(250); // ポートが空くまで待つ
+}
+/** サーバーを立てる。立てられなかったら、そこで止める（ポートがふさがっているときに、よそのサーバーへ向けて続きを走らせない） */
+async function mustStart(label, env) {
+  const ok = await start(env);
+  check(label, ok);
+  if (!ok) throw new Error("サーバーを立てられなかったので、ここで止めます");
 }
 const send = (method, url, body, cookie) => fetch(`${BASE}${url}`, { method, headers: { "Content-Type": "application/json", ...(cookie ? { cookie } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })
   .then(async (r) => ({ status: r.status, j: await r.json().catch(() => ({})), cookie: (r.headers.get("set-cookie") || "").split(";")[0] }));
@@ -125,10 +132,13 @@ const hmac = (key, body) => crypto.createHmac("sha256", key).update(body).digest
   for (const name of fs.readdirSync(root)) {
     const src = path.join(root, name);
     const st = fs.lstatSync(src);
-    if (st.isDirectory() ? COPY_DIRS.includes(name) : st.isFile() && COPY_FILE.test(name)) fs.cpSync(src, path.join(WORK, name), { recursive: true });
+    if (st.isDirectory() ? COPY_DIRS.includes(name) : st.isFile() && COPY_FILE.test(name)) fs.cpSync(src, path.join(WORK, name), { recursive: true, filter: (p) => !path.basename(p).startsWith(".") });
   }
-  const leaked = fs.readdirSync(WORK).filter((n) => /^\.(env|turso|vercel)/.test(n));
-  check("写しに、.env や鍵のファイルが入っていない", leaked.length === 0, leaked);
+  // 写しの中（下の階も）に、点で始まるファイルが 1 つも無いこと（.env・.turso-token など。写すフォルダの中に置かれていても、写さない）
+  const dotted = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.name.startsWith(".")) dotted.push(path.relative(WORK, path.join(d, e.name))); else if (e.isDirectory()) walk(path.join(d, e.name)); } };
+  walk(WORK);
+  check("写しに、.env や鍵のファイル（点で始まるファイル）が、どの階にも入っていない", dotted.length === 0, dotted);
   fs.symlinkSync(path.join(root, "node_modules"), path.join(WORK, "node_modules"), "dir");
   // ---- 2. 写しのほうだけ true にして、ビルド ----
   const flagFile = path.join(WORK, "src/lib/staff-login.ts");
@@ -157,7 +167,7 @@ const hmac = (key, body) => crypto.createHmac("sha256", key).update(body).digest
 
   try {
     // ---- A. ふつうの設定: 画面つきの確かめを回す ----
-    check("A: サーバーが立つ（ADMIN_PASSWORD と STAFF_COOKIE_SECRET あり）", await start({ ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: SECRET_A }));
+    await mustStart("A: サーバーが立つ（ADMIN_PASSWORD と STAFF_COOKIE_SECRET あり）", { ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: SECRET_A });
     const sub = await runToEnd([path.join(WORK, "scripts/test-staff-login.cjs")], { cwd: WORK, env: { ...baseEnv(), MODE: "pw", ADMIN_PW, BASE }, stdio: ["ignore", "pipe", "pipe"] });
     const out = sub.out;
     for (const line of out.split("\n")) if (line.trim()) console.log("   | " + line);
@@ -175,13 +185,13 @@ const hmac = (key, body) => crypto.createHmac("sha256", key).update(body).digest
     const H1 = await hashes();
 
     // ---- B. 立て直しても、そのまま ----
-    check("B: サーバーを立て直す（同じ設定）", await start({ ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: SECRET_A }));
+    await mustStart("B: サーバーを立て直す（同じ設定）", { ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: SECRET_A });
     const b1 = await login("長山", "wrong-value"), b2 = await login("長山", TEST_PW);
     check("B: 立て直しても、出してあった印・入れてあったパスワードは、そのまま使える。DB の値は 1 つも変わらない（立て直すたびに消えない）",
       (await asStaff(C1)) === 200 && b1.status === 401 && b2.status === 200 && (await hashes()) === H1, [await asStaff(C1), b1.status, b2.status, (await hashes()) === H1]);
 
     // ---- C. 鍵のもとを入れ替える ----
-    check("C: サーバーを立て直す（STAFF_COOKIE_SECRET を入れ替え）", await start({ ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: SECRET_B }));
+    await mustStart("C: サーバーを立て直す（STAFF_COOKIE_SECRET を入れ替え）", { ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: SECRET_B });
     const o1 = await others();
     const c1 = await login("長山", TEST_PW);
     check("C: 鍵のもとを入れ替えると、前の印も、前のパスワードも、通らない（まとめて無効）", (await asStaff(C1)) === 401 && (await asAdmin(made)) === 401 && c1.status === 401 && !c1.cookie && c1.j.error === "名前またはパスワードが違います", [await asStaff(C1), c1.status, c1.j.error]);
@@ -191,7 +201,7 @@ const hmac = (key, body) => crypto.createHmac("sha256", key).update(body).digest
     // ---- D. ADMIN_PASSWORD が短い ----
     await db.execute("UPDATE staff SET pass_hash = '' WHERE role = 'admin'"); // 戻した直後の管理者（いまの形のパスワードが、まだ無い）
     const o2 = await others();
-    check("D: サーバーを立て直す（ADMIN_PASSWORD が 5 文字。STAFF_COOKIE_SECRET はある）", await start({ ADMIN_PASSWORD: "short", STAFF_COOKIE_SECRET: SECRET_B }));
+    await mustStart("D: サーバーを立て直す（ADMIN_PASSWORD が 5 文字。STAFF_COOKIE_SECRET はある）", { ADMIN_PASSWORD: "short", STAFF_COOKIE_SECRET: SECRET_B });
     const d1 = await login("杉本", "short"), d2 = await login("杉本", ADMIN_PW);
     check("D: ADMIN_PASSWORD が 8 文字未満なら、管理者に「env を入れてデプロイし直す」と伝える（503）。入れない・何も消さない",
       d1.status === 503 && d2.status === 503 && String(d1.j.error).includes("管理者のパスワードが、まだ入っていません") && !d1.cookie && (await others()) === o2 && (await q("SELECT pass_hash FROM staff WHERE role = 'admin'"))[0].pass_hash === "", [d1.status, d2.status, d1.j.error]);
@@ -200,8 +210,11 @@ const hmac = (key, body) => crypto.createHmac("sha256", key).update(body).digest
     for (const [label, env, forgedKey] of [
       ["STAFF_COOKIE_SECRET なし・ADMIN_PASSWORD あり", { ADMIN_PASSWORD: ADMIN_PW }, keyFrom(`p:${ADMIN_PW}`)],
       ["STAFF_COOKIE_SECRET が 12 文字", { ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: "short-secret" }, keyFrom("s:short-secret")],
+      ["STAFF_COOKIE_SECRET が 15 文字（16 文字に 1 つ足りない）", { ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: "fifteen-chars-0" }, keyFrom("s:fifteen-chars-0")],
+      ["STAFF_COOKIE_SECRET が空白 16 個", { ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: " ".repeat(16) }, keyFrom("s:" + " ".repeat(16))],
+      ["STAFF_COOKIE_SECRET が ADMIN_PASSWORD と同じ値", { ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: ADMIN_PW }, keyFrom(`s:${ADMIN_PW}`)],
     ]) {
-      check(`D2: サーバーを立て直す（${label}）`, await start(env));
+      await mustStart(`D2: サーバーを立て直す（${label}）`, env);
       const before = await counts();
       const x1 = await login("杉本", ADMIN_PW), x2 = await login("長山", TEST_PW);
       const forged = await asAdmin(pw2(forgedKey, ownerId, "admin"));
@@ -210,7 +223,7 @@ const hmac = (key, body) => crypto.createHmac("sha256", key).update(body).digest
     }
 
     // ---- E. env が 1 つも無い ----
-    check("E: サーバーを立て直す（env なし）。名前の一覧は出る", await start({}));
+    await mustStart("E: サーバーを立て直す（env なし）。名前の一覧は出る", {});
     const before = await counts();
     const e1 = await login("長山", TEST_PW), e2 = await login("杉本", ADMIN_PW), e3 = await login("いない人", "x");
     const after = await counts();
@@ -235,7 +248,7 @@ const hmac = (key, body) => crypto.createHmac("sha256", key).update(body).digest
     check("E: スタッフの表が空でも、ログインの依頼では、何も書かない（種を入れるのは、準備ができてから）", e4.status === 503 && emptyStill === 0, [e4.status, emptyStill]);
 
     // ---- F. もとの設定に戻す ----
-    check("F: サーバーを立て直す（A と同じ設定）", await start({ ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: SECRET_A }));
+    await mustStart("F: サーバーを立て直す（A と同じ設定）", { ADMIN_PASSWORD: ADMIN_PW, STAFF_COOKIE_SECRET: SECRET_A });
     const f1 = await login("長山", TEST_PW), f2 = await login("杉本", ADMIN_PW);
     check("F: もとの鍵に戻すと、A のパスワード・印が、また使える（途中で、何も壊していない）。管理者も ADMIN_PASSWORD で入れる", (await asStaff(C1)) === 200 && f1.status === 200 && f2.status === 200, [await asStaff(C1), f1.status, f2.status]);
   } finally {

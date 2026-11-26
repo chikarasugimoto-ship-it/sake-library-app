@@ -314,8 +314,10 @@ const hashes = async () => (await db.execute({ sql: "SELECT name, pass_hash FROM
     await tryLogin("杉本", ADMIN_PW); // 失敗の数を 0 に戻す
     const hints = [];
     for (let i = 0; i < 10; i++) hints.push(await tryLogin(NEW, "x" + i)); // NEW は、パスワードが空のまま
+    // 案内のあとに、本当の失敗（パスワードちがい）を 1 回はさむ。案内を数に入れていたら、ここで 8 回を超えて、次の正しいログインが止まる
+    const realFail = await tryLogin("長山", "wrong-value");
     const afterHints = await tryLogin("長山", TEST_PW);
-    check("案内が 10 回つづいても、ほかの人のログインは止まらない（失敗 8 回で 60 秒止める、の数に入れない）", hints.every((x) => x.status === 401 && String(x.j.error).includes("まだパスワードが入っていません")) && afterHints.status === 200, [hints.map((x) => x.status).join(), afterHints.status]);
+    check("案内が 10 回つづいても、ほかの人のログインは止まらない（失敗 8 回で 60 秒止める、の数に入れない。そのあとの本当の失敗 1 回でも、止まらない）", hints.every((x) => x.status === 401 && String(x.j.error).includes("まだパスワードが入っていません")) && realFail.status === 401 && afterHints.status === 200, [hints.map((x) => x.status).join(), realFail.status, afterHints.status]);
     // ---- 3d. 短いパスワードは、入れない ----
     const short1 = await send("PATCH", "/api/admin/staff", { id: hosodaId, password: "abc" }, adminCk);
     const short2 = await send("POST", "/api/admin/staff", { name: NEW + "短", password: "abc" }, adminCk);

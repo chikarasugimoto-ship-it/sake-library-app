@@ -49,7 +49,8 @@ const MIN_COOKIE_SECRET = 16;
 function pwKey(): Buffer | null {
   const secret = process.env.STAFF_COOKIE_SECRET || "";
   const admin = process.env.ADMIN_PASSWORD || "";
-  if (process.env.NODE_ENV === "production" && secret.length < MIN_COOKIE_SECRET) return null;
+  // 空白だけの値・ADMIN_PASSWORD と同じ値も、鍵にしない（同じ値だと、にせの印で ADMIN_PASSWORD の当て推量を試せる穴が、そのまま残る）
+  if (process.env.NODE_ENV === "production" && (secret.trim().length < MIN_COOKIE_SECRET || secret === admin)) return null;
   const from = secret ? `s:${secret}` : `p:${admin || "sugidama-dev-key"}`;
   if (!_pwKey || _pwKey.from !== from) _pwKey = { from, key: scryptSync(from, "sksl.staff.cookie.v2", 32) };
   return _pwKey.key;
@@ -181,7 +182,7 @@ export function ownerRecoveryMatches(role: string, password: string): boolean {
 
 /** ログインの結果。setup = 設定が終わっていなくて、だれも入れない（Vercel の env を直す）／ hint = この人が入れない理由の案内 */
 export type StaffLoginResult = { ok: true; session: StaffSession } | { ok: false; setup?: string; hint?: string };
-export const LOGIN_SETUP_NO_KEY = "ログインの準備が、まだ終わっていません。Vercel に ADMIN_PASSWORD（8 文字以上）と STAFF_COOKIE_SECRET（16 文字以上）を入れて、デプロイし直してください。";
+export const LOGIN_SETUP_NO_KEY = "ログインの準備が、まだ終わっていません。Vercel に ADMIN_PASSWORD（8 文字以上）と STAFF_COOKIE_SECRET（16 文字以上。ADMIN_PASSWORD とは別の値）を入れて、デプロイし直してください。";
 export const LOGIN_SETUP_ADMIN = "管理者のパスワードが、まだ入っていません。Vercel の ADMIN_PASSWORD（8 文字以上）を入れて、デプロイし直すと、その値で入れます。";
 export const LOGIN_HINT_STAFF = "この名前には、まだパスワードが入っていません。管理者に、スタッフ管理の「パスワード初期化」をしてもらってください。";
 
