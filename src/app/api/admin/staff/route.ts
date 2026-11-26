@@ -73,7 +73,13 @@ export async function DELETE(req: NextRequest) {
   if (target.role === "admin" && (await adminCount()) <= 1) {
     return NextResponse.json({ error: "最後の管理者は削除できません" }, { status: 409 });
   }
-  await run("DELETE FROM staff WHERE id = ?", [id]);
+  // 「最後の管理者は消さない」を、消す SQL の中でも確かめる（上の数え方だけだと、同時に 2 つ届いたとき、2 人とも消せてしまう。
+  // 管理者が 0 人になると、だれもスタッフ管理に入れない。2026-11-26 レビュー指摘）
+  const del = await run(
+    "DELETE FROM staff WHERE id = ? AND (role <> 'admin' OR (SELECT COUNT(*) FROM staff WHERE role = 'admin') > 1)",
+    [id]
+  );
+  if (del.rowsAffected < 1) return NextResponse.json({ error: "最後の管理者は削除できません" }, { status: 409 });
   await audit("staff.delete", { id });
   return NextResponse.json({ ok: true });
 }
