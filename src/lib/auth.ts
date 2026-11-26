@@ -32,20 +32,24 @@ export type StaffSession = { id: number; role: "admin" | "staff" };
 //   nopw … 決まった文字（OPEN_KEY。秘密ではない）。ADMIN_PASSWORD は使わない。
 //          無しのあいだは、だれでも印をもらえる。そこに ADMIN_PASSWORD で作った署名を付けると、印 1 つで、ADMIN_PASSWORD の
 //          当て推量を手元で 1 秒に何十万回も試せてしまう（レビュー指摘）。入口が開いているあいだ、印の署名は何も守っていないので、秘密を使わない
-//   pw2  … STAFF_COOKIE_SECRET（Vercel の env。入れてあれば）。無ければ ADMIN_PASSWORD。どちらも、そのまま鍵にはせず、
-//          時間のかかる計算（scrypt）を通した値を鍵にする（印から当て推量を試すのに、1 回ごとに時間がかかるようにする）
-//          本番で、どちらの env も無いときは、鍵を作らない＝印を出さない・受け付けない（開発用の決まった値は、このリポが公開なので
-//          だれでも読める。それで署名すると、だれでも管理者の印を作れてしまう。2026-11-26 レビュー指摘）
+//   pw2  … STAFF_COOKIE_SECRET（Vercel の env。16 文字以上）。そのまま鍵にはせず、時間のかかる計算（scrypt）を通した値を鍵にする。
+//          **本番では、STAFF_COOKIE_SECRET が無い・短いときは、鍵を作らない＝印を出さない・受け付けない**（2026-11-27 確認レビューの指摘）。
+//          前は、無ければ ADMIN_PASSWORD を鍵のもとにしていた。それだと、にせの印を作って送るだけで、ADMIN_PASSWORD の当て推量を、
+//          ログインの回数制限を通らずに、いくらでも試せた（印を 1 つも持っていなくても、できる）。
+//          開発（next dev）では、STAFF_COOKIE_SECRET が無ければ ADMIN_PASSWORD、それも無ければ開発用の決まった値で動く
+//          （開発用の値は、このリポが公開なので、だれでも読める。それで署名すると、だれでも管理者の印を作れる＝本番では、ぜったいに使わない）
 const KIND = PASSWORD_REQUIRED ? "pw2" : "nopw";
 /** 前の形（3 つ組）の印を通すか。パスワードなしの設定のあいだだけ（パスワードありでは、必ず false） */
 const LEGACY_OK = !PASSWORD_REQUIRED;
 const OPEN_KEY = "sksl.staff.nopw.v1";
 let _pwKey: { from: string; key: Buffer } | null = null;
-/** パスワードありの印の鍵。null = 作れない（本番で env が 1 つも無い） */
+/** 本番で、鍵のもと（STAFF_COOKIE_SECRET）に求める長さ */
+const MIN_COOKIE_SECRET = 16;
+/** パスワードありの印の鍵。null = 作れない（本番で STAFF_COOKIE_SECRET が無い・短い） */
 function pwKey(): Buffer | null {
   const secret = process.env.STAFF_COOKIE_SECRET || "";
   const admin = process.env.ADMIN_PASSWORD || "";
-  if (!secret && !admin && process.env.NODE_ENV === "production") return null;
+  if (process.env.NODE_ENV === "production" && secret.length < MIN_COOKIE_SECRET) return null;
   const from = secret ? `s:${secret}` : `p:${admin || "sugidama-dev-key"}`;
   if (!_pwKey || _pwKey.from !== from) _pwKey = { from, key: scryptSync(from, "sksl.staff.cookie.v2", 32) };
   return _pwKey.key;
@@ -63,7 +67,8 @@ export function signStaff(id: number, role: string): string {
   return `${body}.${sig}`;
 }
 // ---- パスワードの保存の形（パスワードありの設定のときだけ使う）----
-// 形: 「k2.」＋ HMAC(鍵, 名前とパスワード)。鍵は、ログインの印（pw2）と同じもと（STAFF_COOKIE_SECRET、無ければ ADMIN_PASSWORD）から作る。
+// 形: 「k2.」＋ HMAC(鍵, 名前の長さ・名前・パスワード)。鍵は、ログインの印（pw2）と同じもと（STAFF_COOKIE_SECRET）から作る。
+// 名前の長さを先に入れてあるのは、名前とパスワードの切れ目を、ずらせないようにするため（「衝突⏎X」＋「abcd」と「衝突」＋「X⏎abcd」が、同じ値にならない）。
 //
 // なぜ、鍵を入れるか（2026-11-27。4fd1102 のレビューの指摘 1〜3 を、根本から直した）:
 //   パスワードなしのあいだは、だれでも管理者として入れた。古いデプロイ（古いコードのまま、同じ DB で動く）は、
@@ -79,12 +84,12 @@ export function signStaff(id: number, role: string): string {
 //   名前を入れているのは、同じパスワードの人どうしで、保存した値が同じにならないようにするため。
 //   ⚠ 名前を変える機能を足すときは、変えた人のパスワードを入れ直すこと（保存した値が合わなくなる）
 const PW_PREFIX = "k2.";
-/** パスワードを保存する形にする。null = 作れない（本番で env が 1 つも無い） */
+/** パスワードを保存する形にする。null = 作れない（本番で STAFF_COOKIE_SECRET が無い・短い） */
 export function passwordHashFor(name: string, password: string): string | null {
   const base = pwKey();
   if (base == null) return null;
   const key = createHmac("sha256", base).update("sksl.staff.pwhash.key.v2").digest(); // 印の署名とは別の鍵にする
-  return PW_PREFIX + createHmac("sha256", key).update(`sksl.staff.pw.v2\n${name}\n${password}`).digest("base64url");
+  return PW_PREFIX + createHmac("sha256", key).update(`sksl.staff.pw.v3\n${Buffer.byteLength(name)}\n${name}\n${password}`).digest("base64url");
 }
 /** 保存してある値と、入力が合うか。前の形・空・鍵がちがうものは、合わない */
 export function passwordMatches(name: string, stored: string, password: string): boolean {
@@ -96,7 +101,7 @@ export function passwordMatches(name: string, stored: string, password: string):
 }
 /** いまの形のパスワードが入っているか（中身が合うかは見ない。「まだ入っていません」の案内に使う） */
 const hasNewPassword = (stored: string) => !!stored && stored.startsWith(PW_PREFIX);
-/** パスワードありの設定で、ログインの印を出せるか（本番で env が 1 つも無いと、出せない） */
+/** パスワードありの設定で、ログインの印を出せるか（本番で STAFF_COOKIE_SECRET が無い・短いと、出せない） */
 export function canIssuePasswordSession(): boolean {
   return pwKey() != null;
 }
@@ -110,7 +115,7 @@ export function verifyStaffCookie(cookie?: string): StaffSession | null {
   const [kind, idStr, role, sig] = parts;
   if (kind !== KIND) return null;      // いまの設定とちがう種類の印
   const expected = mac(`${kind}.${idStr}.${role}`);
-  if (expected == null) return null;   // 鍵が無い（本番で env が無い）→ どの印も受け付けない
+  if (expected == null) return null;   // 鍵が無い（本番で STAFF_COOKIE_SECRET が無い・短い）→ どの印も受け付けない
   const want = Buffer.from(expected);
   const got = Buffer.from(sig);
   if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
@@ -176,15 +181,16 @@ export function ownerRecoveryMatches(role: string, password: string): boolean {
 
 /** ログインの結果。setup = 設定が終わっていなくて、だれも入れない（Vercel の env を直す）／ hint = この人が入れない理由の案内 */
 export type StaffLoginResult = { ok: true; session: StaffSession } | { ok: false; setup?: string; hint?: string };
-export const LOGIN_SETUP_NO_KEY = "ログインの準備が、まだ終わっていません。Vercel に ADMIN_PASSWORD（8 文字以上）と STAFF_COOKIE_SECRET を入れて、デプロイし直してください。";
+export const LOGIN_SETUP_NO_KEY = "ログインの準備が、まだ終わっていません。Vercel に ADMIN_PASSWORD（8 文字以上）と STAFF_COOKIE_SECRET（16 文字以上）を入れて、デプロイし直してください。";
 export const LOGIN_SETUP_ADMIN = "管理者のパスワードが、まだ入っていません。Vercel の ADMIN_PASSWORD（8 文字以上）を入れて、デプロイし直すと、その値で入れます。";
 export const LOGIN_HINT_STAFF = "この名前には、まだパスワードが入っていません。管理者に、スタッフ管理の「パスワード初期化」をしてもらってください。";
 
 export async function verifyStaffLogin(name: string, password: string): Promise<StaffLoginResult> {
-  await ensureStaffSeed();
-  // パスワードありの設定で、本番に env が 1 つも無いときは、ログインの印を作れない＝だれも入れない。
-  // DB に何も書かないうちに、そう伝える（前は、パスワードが合ったあとで 500 になり、「入った」の記録だけが残った。レビューの指摘 5）
+  // パスワードありの設定で、本番に STAFF_COOKIE_SECRET が無い・短いときは、ログインの印を作れない＝だれも入れない。
+  // DB に何も書かないうちに（スタッフの種も入れないうちに）、そう伝える
+  // （前は、パスワードが合ったあとで 500 になり、「入った」の記録だけが残った。レビューの指摘 5）
   if (PASSWORD_REQUIRED && !canIssuePasswordSession()) return { ok: false, setup: LOGIN_SETUP_NO_KEY };
+  await ensureStaffSeed();
   const s = await get<StaffRow>("SELECT id, name, pass_hash, role FROM staff WHERE name = ?", [name]);
   if (!s) return { ok: false };
   // パスワードなし（PASSWORD_REQUIRED = false。2026-11-26 オーナー指示）のあいだは、名前が合えば入れる。

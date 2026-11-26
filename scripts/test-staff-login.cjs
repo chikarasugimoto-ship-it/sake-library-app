@@ -7,7 +7,7 @@
 //        （next dev でも回るが、DB への書きこみのたびに作り直しが走り、まれに 500 が混ざる。ビルドしたほうが確か）
 //   2) node scripts/test-staff-login.cjs [画面写真を置くフォルダ]
 //        … いまの設定（src/lib/staff-login.ts の PASSWORD_REQUIRED = false）で、名前を押すだけで入れること・保存してあるパスワードは
-//          書きかえられないこと・ログインの印の形・口の返事（31 項目。data/sake-library.db を消してから始めたときは FRESH=1 を付けると、種の確かめも回る＝32 項目）
+//          書きかえられないこと・ログインの印の形・口の返事（31 項目。FRESH=1 のときは 32 項目。data/sake-library.db を消してから始めたときは FRESH=1 を付けると、種の確かめも回る＝32 項目）
 //   3) 「パスワードに戻す」スイッチが効くことまで見るとき:  node scripts/test-staff-pwmode.cjs
 //        このフォルダを書きかえずに、一時のコピーの PASSWORD_REQUIRED を true にしてビルドし、サーバーを立て直しながら確かめる。
 //        その中で、このスクリプトを MODE=pw で、一時のコピーに向けて回す（MODE=pw を手で回すことは、ふつう無い）
@@ -237,7 +237,7 @@ const hashes = async () => (await db.execute({ sql: "SELECT name, pass_hash FROM
     const adminCk = `sksl_staff=${nopwCookie(ownerId)}`;
     const api = (method, body) => fetch(`${BASE}/api/admin/staff`, { method, headers: { "Content-Type": "application/json", cookie: adminCk }, body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, j: await r.json().catch(() => ({})) }));
     const noId = [(await api("PATCH", { role: "staff" })).status, (await api("DELETE", {})).status, (await api("PATCH", { id: "abc", role: "staff" })).status, (await api("DELETE", { id: 0 })).status];
-    check("id の無い・おかしい依頼は 400（前は 500）", noId.join() === "400,400,400,400", noId);
+    check("id の無い・おかしい依頼は 400（前は、形によって 404 か 500）", noId.join() === "400,400,400,400", noId);
     const sameRole = await api("PATCH", { id: ownerId, role: "admin" });
     check("ただ 1 人の管理者を、管理者のままにする依頼は通る（200。守りが、上げる依頼まで止めていない）", sameRole.status === 200 && (await adminsNow()) === 1, [sameRole.status, await adminsNow()]);
     const TMP = NEW + "仮";
@@ -307,6 +307,20 @@ const hashes = async () => (await db.execute({ sql: "SELECT name, pass_hash FROM
     const h1 = await passOf("長山"), h2 = await passOf("細田");
     check("管理者が「パスワード初期化」をすると、いまの形で保存される。同じパスワードでも、人がちがえば値はちがう", init1.status === 200 && init2.status === 200 && h1.startsWith("k2.") && h2.startsWith("k2.") && h1 !== h2, [init1.status, init2.status, h1.slice(0, 3), h1 === h2]);
     check("スタッフの印では、「パスワード初期化」はできない（401）", (await send("PATCH", "/api/admin/staff", { id: hosodaId, password: "zzzz-9999" }, (await tryLogin("長山", TEST_PW)).cookie)).status === 401 && (await passOf("細田")) === h2);
+    // ---- 3b. ADMIN_PASSWORD の値で入れるのは、管理者だけ ----
+    const staffByEnv = await tryLogin("細田", ADMIN_PW);
+    check("スタッフの名前＋ADMIN_PASSWORD の値では、入れない（その値で入れるのは、管理者だけ。スタッフの値も書きかわらない）", staffByEnv.status === 401 && !staffByEnv.cookie && (await passOf("細田")) === h2, [staffByEnv.status]);
+    // ---- 3c. 「まだパスワードが入っていません」の案内は、失敗の数に入れない（戻した直後は、全員がこの状態）----
+    await tryLogin("杉本", ADMIN_PW); // 失敗の数を 0 に戻す
+    const hints = [];
+    for (let i = 0; i < 10; i++) hints.push(await tryLogin(NEW, "x" + i)); // NEW は、パスワードが空のまま
+    const afterHints = await tryLogin("長山", TEST_PW);
+    check("案内が 10 回つづいても、ほかの人のログインは止まらない（失敗 8 回で 60 秒止める、の数に入れない）", hints.every((x) => x.status === 401 && String(x.j.error).includes("まだパスワードが入っていません")) && afterHints.status === 200, [hints.map((x) => x.status).join(), afterHints.status]);
+    // ---- 3d. 短いパスワードは、入れない ----
+    const short1 = await send("PATCH", "/api/admin/staff", { id: hosodaId, password: "abc" }, adminCk);
+    const short2 = await send("POST", "/api/admin/staff", { name: NEW + "短", password: "abc" }, adminCk);
+    const short3 = await send("POST", "/api/admin/change-password", { current: TEST_PW, newPassword: "abc" }, afterHints.cookie);
+    check("3 文字のパスワードは、入れない（初期化・追加・自分の変更とも 400）。値は変わらない・行は増えない", short1.status === 400 && short2.status === 400 && short3.status === 400 && (await passOf("細田")) === h2 && (await passOf("長山")) === h1 && !(await idOf(NEW + "短")), [short1.status, short2.status, short3.status]);
     // ---- 4. 古いデプロイが、あとから前の形で入れ直しても、通らない（「1 回だけ空にする」では防げなかった穴）----
     await db.execute({ sql: "UPDATE staff SET pass_hash = ? WHERE name = '長山'", args: [sha(TEST_PW)] });
     const injected = await tryLogin("長山", TEST_PW);
@@ -360,6 +374,17 @@ const hashes = async () => (await db.execute({ sql: "SELECT name, pass_hash FROM
     const addLogin = await tryLogin(NEW + "3", TEST_PW);
     check("管理者が足したスタッフは、そのパスワードで入れる（保存はいまの形）", add.status === 200 && addLogin.status === 200 && (await passOf(NEW + "3")).startsWith("k2."), [add.status, addLogin.status]);
     await db.execute({ sql: "DELETE FROM staff WHERE name = ?", args: [NEW + "3"] });
+    // 名前の前後に空白を付けて足しても、保存する名前（空白なし）で、パスワードが合う（保存の値は、保存する名前で作る）
+    const addSp = await send("POST", "/api/admin/staff", { name: "  " + NEW + "4  ", password: TEST_PW }, adminCk);
+    const addSpLogin = await tryLogin(NEW + "4", TEST_PW);
+    check("名前の前後に空白を付けて足しても、空白なしの名前で入れる", addSp.status === 200 && (await idOf(NEW + "4")) > 0 && addSpLogin.status === 200, [addSp.status, addSpLogin.status]);
+    // 名前とパスワードの切れ目を、ずらせない（名前「A⏎X」＋「abcd-1234」と、名前「A」＋「X⏎abcd-1234」が、同じ保存の値にならない）
+    await db.execute({ sql: "DELETE FROM staff WHERE name IN (?, ?)", args: [NEW + "5", NEW + "5\nX"] });
+    const amb1 = await send("POST", "/api/admin/staff", { name: NEW + "5", password: "X\nabcd-1234" }, adminCk);
+    const amb2 = await send("POST", "/api/admin/staff", { name: NEW + "5\nX", password: "abcd-1234" }, adminCk);
+    const ambSame = amb1.status === 200 && amb2.status === 200 ? (await passOf(NEW + "5")) === (await passOf(NEW + "5\nX")) : null;
+    check("名前とパスワードの切れ目をずらしても、保存の値は同じにならない", ambSame === false || amb2.status !== 200, [amb1.status, amb2.status, ambSame]);
+    await db.execute({ sql: "DELETE FROM staff WHERE name IN (?, ?, ?)", args: [NEW + "4", NEW + "5", NEW + "5\nX"] });
     // ---- 8. 「最後の管理者を一般に下げない」: 口が、守りの SQL に、頼まれた権限をそのまま渡しているか ----
     //  割りこみを作る: 口が「下げる相手」を読んだあと（そのときは一般）で、相手がただ 1 人の管理者になる。
     //  パスワードの入れ直しと権限の変更を 1 つの依頼で送ると、口は パスワードを書く → 権限を書く の順に動く。

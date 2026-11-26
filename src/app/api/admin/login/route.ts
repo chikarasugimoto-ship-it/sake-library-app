@@ -23,12 +23,15 @@ export async function POST(req: NextRequest) {
   if (!r.ok) {
     // 設定が終わっていなくて、だれも入れない（Vercel の env）。当て推量の数には入れない
     if (r.setup) return NextResponse.json({ error: r.setup }, { status: 503 });
+    // 「まだパスワードが入っていません」の案内も、当て推量の数には入れない（その人には、当てるパスワードが、まだ無い）。
+    // 入れると、パスワードに戻した直後（全員がこの状態）に、スタッフが名前を 8 回押しただけで、管理者まで 60 秒入れなくなる（確認レビューの指摘）
+    if (r.hint) return NextResponse.json({ error: r.hint }, { status: 401 });
     failures++;
     if (failures >= 8) {
       blockedUntil = Date.now() + 60_000;
       failures = 0;
     }
-    return NextResponse.json({ error: r.hint || (PASSWORD_REQUIRED ? "名前またはパスワードが違います" : "その名前のスタッフが見つかりません") }, { status: 401 });
+    return NextResponse.json({ error: PASSWORD_REQUIRED ? "名前またはパスワードが違います" : "その名前のスタッフが見つかりません" }, { status: 401 });
   }
   const sess = r.session;
   failures = 0;
