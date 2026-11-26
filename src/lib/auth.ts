@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { all, get, run } from "./db";
+import { PASSWORD_REQUIRED } from "./staff-login";
 
 export const STAFF_COOKIE = "sksl_staff";
 const TEMP_PASS = "sugidama"; // 杉本以外の初期仮パスワード（各自/管理者が後で変更）
@@ -83,7 +84,9 @@ export async function verifyStaffLogin(name: string, password: string): Promise<
   await ensureStaffSeed();
   const s = await get<StaffRow>("SELECT id, name, pass_hash, role FROM staff WHERE name = ?", [name]);
   if (!s) return null;
-  if (!s.pass_hash || s.pass_hash !== hashPassword(password)) {
+  // パスワードなし（PASSWORD_REQUIRED = false。2026-11-26 オーナー指示）のあいだは、名前が合えば入れる。
+  // パスワードは見ない・書きかえない（戻したときに、前のパスワードがそのまま使えるように）
+  if (PASSWORD_REQUIRED && (!s.pass_hash || s.pass_hash !== hashPassword(password))) {
     // 管理者がパスワードを忘れたときの復旧（2026-11-18）。他のスタッフは管理者が戻せるが、管理者本人は戻す人がいない。
     // Vercel の ADMIN_PASSWORD を新しい値に入れ直す → その値で管理者としてログインでき、以後のパスワードもその値になる。
     // env を書き換えられるのは Vercel に入れる人だけ。env が未設定・短すぎる（8 文字未満）ときは使えない（開発既定値では通さない）。

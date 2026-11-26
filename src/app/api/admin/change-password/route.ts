@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentStaff, hashPassword } from "@/lib/auth";
 import { get, run, audit } from "@/lib/db";
+import { PASSWORD_REQUIRED } from "@/lib/staff-login";
 
 // ログイン中のスタッフが自分のパスワードを変更する（杉本含む全員）
 export async function POST(req: NextRequest) {
   const s = await currentStaff();
   if (!s) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // パスワードなしの設定（2026-11-26〜）のあいだは、保存してあるパスワードを書きかえさせない。
+  // だれでも入れるあいだに書きかえられると、パスワードに戻したとき、前のパスワードで入れなくなる
+  if (!PASSWORD_REQUIRED) return NextResponse.json({ error: "いまは、パスワードなしの設定です（変えるパスワードはありません）" }, { status: 409 });
 
   const b = (await req.json()) as { current?: string; newPassword?: string };
   const newPw = String(b.newPassword ?? "");

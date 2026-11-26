@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { STAFF_COOKIE, signStaff, verifyStaffLogin, listStaff } from "@/lib/auth";
 import { audit } from "@/lib/db";
+import { PASSWORD_REQUIRED } from "@/lib/staff-login";
 
+// 2026-11-26 オーナー指示で、パスワードなし（PASSWORD_REQUIRED = false）。名前が合えば、パスワードを見ずに入れる（auth.ts の verifyStaffLogin）。
 // 雑なブルートフォース対策（プロセス内）
 let failures = 0;
 let blockedUntil = 0;
@@ -24,10 +26,11 @@ export async function POST(req: NextRequest) {
       blockedUntil = Date.now() + 60_000;
       failures = 0;
     }
-    return NextResponse.json({ error: "名前またはパスワードが違います" }, { status: 401 });
+    return NextResponse.json({ error: PASSWORD_REQUIRED ? "名前またはパスワードが違います" : "その名前のスタッフが見つかりません" }, { status: 401 });
   }
   failures = 0;
-  await audit("staff.login", { id: sess.id, name });
+  // nopw = パスワードなしの設定で入った（2026-11-26〜。あとで「だれが、どう入ったか」を見分けられるように残す）
+  await audit("staff.login", PASSWORD_REQUIRED ? { id: sess.id, name } : { id: sess.id, name, nopw: true });
   const res = NextResponse.json({ ok: true, role: sess.role });
   res.cookies.set(STAFF_COOKIE, signStaff(sess.id, sess.role), {
     httpOnly: true,

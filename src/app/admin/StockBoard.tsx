@@ -6,6 +6,7 @@ import type { Sake } from "@/lib/types";
 import { digestDays, daysSinceDelivery, fmtMD, missingInfo, photoUrl } from "@/lib/types";
 import { resizeForAI, buildDisplayPhoto, type Bbox } from "@/lib/photo";
 import { PasswordChange } from "./PasswordChange";
+import { PASSWORD_REQUIRED } from "@/lib/staff-login";
 
 const STATUS_LABELS: { value: Sake["status"]; label: string; activeClass: string }[] = [
   { value: "available", label: "提供中", activeClass: "bg-moss text-white" },
@@ -353,7 +354,8 @@ export function StockBoard({
           <Link href="/admin/mascot" className="rounded-full border border-hairline bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-moss-deep">
             🌱 すぎだまる生成
           </Link>
-          <PasswordChange />
+          {/* パスワードなしの設定（2026-11-26〜）では、変えるパスワードが無いので出さない */}
+          {PASSWORD_REQUIRED && <PasswordChange />}
           {owner && (
             <Link href="/admin/staff" className="rounded-full border border-hairline bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-moss-deep">
               👥 スタッフ管理

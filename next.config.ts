@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
       { source: "/u/:slug", destination: "/", permanent: false },
     ];
   },
+  // スタッフ用の管理画面（/admin）は、検索に載せない。2026-11-26 から、パスワードなしで入れる設定（src/lib/staff-login.ts）なので、
+  // せめて、検索からは見つからないようにする（入口をふさぐものではない）
+  async headers() {
+    return [{ source: "/admin/:path*", headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] }];
+  },
   images: {
     // 写真を表示サイズに合わせてWebP/AVIFへ自動圧縮（転送量を大幅削減）
     formats: ["image/avif", "image/webp"],

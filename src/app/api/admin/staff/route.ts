@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { all, get, run, audit } from "@/lib/db";
 import { isOwner, hashPassword, ensureStaffSeed } from "@/lib/auth";
+import { PASSWORD_REQUIRED } from "@/lib/staff-login";
 
 async function adminCount(): Promise<number> {
   const r = await get<{ n: number }>("SELECT COUNT(*) AS n FROM staff WHERE role = 'admin'");
@@ -24,11 +25,13 @@ export async function POST(req: NextRequest) {
   const name = (b.name ?? "").trim().slice(0, 30);
   const password = String(b.password ?? "");
   if (!name) return NextResponse.json({ error: "名前を入れてください" }, { status: 400 });
-  if (password.length < 4) return NextResponse.json({ error: "パスワードは4文字以上にしてください" }, { status: 400 });
+  // パスワードなしの設定（2026-11-26〜）では、名前だけで追加する。パスワードは、送られてきても入れない（pass_hash は空）。
+  // 空のスタッフは、パスワードに戻したあと、管理者が「パスワード初期化」で入れるまで入れない（auth.ts の verifyStaffLogin）
+  if (PASSWORD_REQUIRED && password.length < 4) return NextResponse.json({ error: "パスワードは4文字以上にしてください" }, { status: 400 });
   const exists = await get("SELECT id FROM staff WHERE name = ?", [name]);
   if (exists) return NextResponse.json({ error: "同じ名前のスタッフがいます" }, { status: 409 });
   const role = b.role === "admin" ? "admin" : "staff";
-  await run("INSERT INTO staff (name, pass_hash, role) VALUES (?, ?, ?)", [name, hashPassword(password), role]);
+  await run("INSERT INTO staff (name, pass_hash, role) VALUES (?, ?, ?)", [name, PASSWORD_REQUIRED ? hashPassword(password) : "", role]);
   await audit("staff.add", { name, role });
   return NextResponse.json({ ok: true });
 }
@@ -42,6 +45,9 @@ export async function PATCH(req: NextRequest) {
   if (!target) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   if (typeof b.password === "string") {
+    // パスワードなしの設定（2026-11-26〜）のあいだは、保存してあるパスワードを書きかえさせない（画面にも出していない）。
+    // だれでも管理者として入れるあいだに書きかえられると、パスワードに戻したとき、スタッフが前のパスワードで入れなくなる
+    if (!PASSWORD_REQUIRED) return NextResponse.json({ error: "いまは、パスワードなしの設定です（パスワードは変えられません）" }, { status: 409 });
     if (b.password.length < 4) return NextResponse.json({ error: "パスワードは4文字以上にしてください" }, { status: 400 });
     await run("UPDATE staff SET pass_hash = ? WHERE id = ?", [hashPassword(b.password), id]);
     await audit("staff.resetpw", { id });

@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { PASSWORD_REQUIRED } from "@/lib/staff-login";
 
-const AUTH_KEY = "sksl.staff.auth"; // {name, pw} をこの端末に保存（任意）
+// 2026-11-26 オーナー指示「日本酒のMOなんだけどパスワードなしにしてほしい」→「全員無しにする」:
+//   PASSWORD_REQUIRED = false のあいだは、名前を押すだけで入る（パスワードの欄は出さない・自動ログインもしない）。
+//   前の設定でこの端末に保存したパスワードは、この画面を開いたときに消す（もう使わないものを、端末に残さない）。
+//   true に戻すと、下の「名前を選ぶ → パスワードを入れる」の画面に戻る
+const AUTH_KEY = "sksl.staff.auth"; // {name, pw} をこの端末に保存（任意。パスワードを聞く設定のときだけ）
 
 type StaffName = { name: string; role: string };
 
@@ -17,7 +22,7 @@ export default function AdminLogin() {
   const autoTried = useRef(false);
 
   async function doLogin(loginName: string, pw: string, fromAuto = false) {
-    if (!loginName || !pw) return;
+    if (!loginName || (PASSWORD_REQUIRED && !pw)) return;
     setBusy(true);
     setError("");
     try {
@@ -28,7 +33,8 @@ export default function AdminLogin() {
       });
       if (res.ok) {
         try {
-          if (remember) localStorage.setItem(AUTH_KEY, JSON.stringify({ name: loginName, pw }));
+          // パスワードなしの設定では、端末に何も保存しない
+          if (PASSWORD_REQUIRED && remember) localStorage.setItem(AUTH_KEY, JSON.stringify({ name: loginName, pw }));
           else localStorage.removeItem(AUTH_KEY);
         } catch {}
         window.location.assign("/admin");
@@ -51,6 +57,11 @@ export default function AdminLogin() {
     autoTried.current = true;
     // 名前一覧を取得
     fetch("/api/admin/login").then((r) => r.json()).then((j) => setStaff(j.staff || [])).catch(() => {});
+    if (!PASSWORD_REQUIRED) {
+      // パスワードなしの設定: 自動ログインはしない（名前を押すだけ）。前の設定で保存したパスワードは、端末から消す
+      try { localStorage.removeItem(AUTH_KEY); } catch {}
+      return;
+    }
     // 保存済みなら自動ログイン
     let saved: { name?: string; pw?: string } | null = null;
     try { saved = JSON.parse(localStorage.getItem(AUTH_KEY) || "null"); } catch {}
@@ -67,6 +78,36 @@ export default function AdminLogin() {
     setName("");
     setPassword("");
     setRemember(false);
+  }
+
+  // ---- パスワードなしの設定: 名前を押すだけで入る ----
+  if (!PASSWORD_REQUIRED) {
+    return (
+      <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-8 pb-24">
+        <p className="text-[11px] font-bold tracking-[0.3em] text-ink-soft">STAFF</p>
+        <h1 className="mt-1 text-2xl font-bold">スタッフログイン</h1>
+        <p className="mt-6 text-sm text-ink-soft">
+          あなたの名前を押してください
+          <span className="mt-0.5 block text-xs">パスワードは要りません</span>
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          {staff.map((s) => (
+            <button
+              key={s.name}
+              disabled={busy}
+              onClick={() => { setName(s.name); doLogin(s.name, ""); }}
+              className="rounded-2xl border border-hairline bg-card px-4 py-5 text-base font-bold text-ink shadow-[0_1px_3px_rgba(38,40,43,0.05)] active:scale-[0.99] disabled:opacity-50"
+            >
+              {s.name}
+              {s.role === "admin" && <span className="ml-1 text-[10px] font-normal text-moss">管理者</span>}
+            </button>
+          ))}
+          {staff.length === 0 && <p className="col-span-2 text-sm text-ink-soft">読み込み中…</p>}
+        </div>
+        {busy && <p className="mt-4 animate-pulse text-sm text-ink-soft">{name} さんで入っています…</p>}
+        {error && <p className="mt-4 text-sm text-[#b04a3a]">{error}</p>}
+      </main>
+    );
   }
 
   if (autoLoggingIn) {

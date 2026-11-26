@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { PASSWORD_REQUIRED } from "@/lib/staff-login";
 
 type Staff = { id: number; name: string; role: string; last_login: string };
 
@@ -32,8 +33,14 @@ export function StaffManager() {
   }
 
   async function add() {
-    if (!newName.trim() || newPw.length < 4) { setMsg("名前とパスワード(4文字以上)を入れてください"); return; }
-    await call("POST", { name: newName.trim(), password: newPw }, `${newName} を追加しました`);
+    if (PASSWORD_REQUIRED) {
+      if (!newName.trim() || newPw.length < 4) { setMsg("名前とパスワード(4文字以上)を入れてください"); return; }
+      await call("POST", { name: newName.trim(), password: newPw }, `${newName} を追加しました`);
+    } else {
+      // パスワードなしの設定（2026-11-26〜）: 名前だけで追加する。パスワードは空のまま（パスワードに戻したら、「パスワード初期化」で入れる）
+      if (!newName.trim()) { setMsg("名前を入れてください"); return; }
+      await call("POST", { name: newName.trim() }, `${newName} を追加しました`);
+    }
     setNewName(""); setNewPw("");
   }
   function resetPw(s: Staff) {
@@ -56,7 +63,11 @@ export function StaffManager() {
     <main className="mx-auto max-w-lg px-6 pb-24 pt-12">
       <Link href="/admin" className="text-xs text-ink-soft">‹ 在庫ボードへ戻る</Link>
       <h1 className="mt-2 text-2xl font-bold">スタッフ管理</h1>
-      <p className="mt-1 text-xs text-ink-soft">追加・パスワード初期化・権限変更・削除（管理者のみ）。</p>
+      {PASSWORD_REQUIRED ? (
+        <p className="mt-1 text-xs text-ink-soft">追加・パスワード初期化・権限変更・削除（管理者のみ）。</p>
+      ) : (
+        <p className="mt-1 text-xs text-ink-soft">追加・権限変更・削除（管理者のみ）。いまは、パスワードなしの設定です（ログイン画面で、名前を押すだけで入れます）。</p>
+      )}
 
       {msg && <p className="mt-3 rounded-xl bg-[#eef3ef] px-3 py-2 text-[12px] text-moss-deep">{msg}</p>}
 
@@ -73,7 +84,9 @@ export function StaffManager() {
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              <button disabled={busy} onClick={() => resetPw(s)} className="rounded-full border border-moss px-3 py-1.5 text-[11.5px] font-bold text-moss disabled:opacity-50">パスワード初期化</button>
+              {PASSWORD_REQUIRED && (
+                <button disabled={busy} onClick={() => resetPw(s)} className="rounded-full border border-moss px-3 py-1.5 text-[11.5px] font-bold text-moss disabled:opacity-50">パスワード初期化</button>
+              )}
               <button disabled={busy} onClick={() => toggleRole(s)} className="rounded-full border border-hairline px-3 py-1.5 text-[11.5px] text-ink-soft disabled:opacity-50">
                 {s.role === "admin" ? "一般にする" : "管理者にする"}
               </button>
@@ -86,7 +99,9 @@ export function StaffManager() {
       <div className="mt-6 rounded-2xl border border-dashed border-hairline p-4">
         <p className="text-sm font-bold">スタッフを追加</p>
         <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="名前" className="mt-2 w-full rounded-xl border border-hairline bg-card px-3.5 py-2.5 text-sm outline-none" />
-        <input value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="初期パスワード（4文字以上）" className="mt-2 w-full rounded-xl border border-hairline bg-card px-3.5 py-2.5 text-sm outline-none" />
+        {PASSWORD_REQUIRED && (
+          <input value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="初期パスワード（4文字以上）" className="mt-2 w-full rounded-xl border border-hairline bg-card px-3.5 py-2.5 text-sm outline-none" />
+        )}
         <button disabled={busy} onClick={add} className="mt-3 w-full rounded-full bg-moss-deep py-3 text-sm font-bold text-white disabled:opacity-50">追加する</button>
       </div>
     </main>
