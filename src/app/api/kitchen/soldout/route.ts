@@ -18,7 +18,7 @@ import {
 //   POST { op: "photo", image, media_type, apply? }
 //        写真（base64。KM の側で小さくしてある）を読み取って、在庫リストの中から同じお酒を選ぶ。
 //          result: "applied" … はっきり 1 本に決まった → 売り切れにした（sake・logId つき。まちがいなら logId で元に戻せる）
-//                  "choose"  … 迷う・同じ銘柄の種類ちがいがある → 候補（candidates）から、スタッフが選ぶ
+//                  "choose"  … 迷う・同じ銘柄（同じ蔵元）のお酒がある → 候補（candidates。売り切れずみもふくむ）から、スタッフが選ぶ
 //                  "already" … そのお酒は、もう売り切れ
 //                  "none"    … 合うお酒が無い（read ＝読み取った文字）
 //        apply: false を付けると、決まっても売り切れにせず、候補として返す（確かめるだけ）
@@ -110,10 +110,10 @@ export async function POST(req: NextRequest) {
         return json({ ok: false, op, error: m.error }, m.error === "ai_timeout" ? 504 : m.error === "ai_unavailable" ? 503 : 502);
       }
       const byId = new Map(rows.map((r) => [Number(r.id), r]));
-      const d = decideMatch(m.matches, rows);
+      const d = decideMatch(m.matches, rows, m.bottle);
       const top = m.matches.map((x) => ({ id: x.id, c: Math.round(x.confidence * 100) / 100 }));
       const done = async (result: string, extra: Record<string, unknown> = {}) => {
-        await audit("kitchen.photo", { result, read: m.read, top, model: m.model, bottle: m.bottle, ...(extra.logId ? { logId: extra.logId } : {}) });
+        await audit("kitchen.photo", { result, read: m.read, top, model: m.model, bottle: m.bottle, ...(m.note ? { note: m.note } : {}), ...(extra.logId ? { logId: extra.logId } : {}) });
         return json({ ok: true, op, result, read: m.read, bottle: m.bottle, ...extra });
       };
       if (d.kind === "none") return done("none", { candidates: [] });

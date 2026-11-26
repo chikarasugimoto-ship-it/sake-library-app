@@ -11,7 +11,9 @@ import { aiAvailable } from "./ai";
 //
 // 決めごと:
 //   - 返すのは「読み取った文字」と「候補（id と確信度）」だけ。売り切れにするかどうかは、ここでは決めない
-//   - スタッフが iPad の前で待っているので、20 秒で打ち切る（やり直しは 1 回まで）。だめなら、KM は一覧から選ぶ道を出す
+//   - スタッフが iPad の前で待っているので、全部で 45 秒・1 回の問い合わせは 20 秒で打ち切る（つながらない・時間切れ・AI の側の失敗のときだけ、
+//     1 回やり直す。混んでいる＝429 は、やり直さない＝待たない）。だめなら、KM は一覧から選ぶ道を出す。
+//     SDK の自動のやり直しは使わない（429 の retry-after を、上限なしに待つ＝Vercel の 60 秒を超えて、何も残らずに切られる）
 //   - まず MATCH_MODEL に、決まった形（JSON スキーマ）で答えさせる。安全の仕組みで断られたときは、API の側で
 //     MATCH_MODEL_PLAIN に回してもらう（fallbacks）。この形そのものを API が受けつけないとき（モデルを使えない、など）は、
 //     ラベル読み取り（ai.ts）と同じ、前からの形で、もう一度だけ聞く
@@ -34,13 +36,15 @@ export type MatchCandidate = {
 };
 export type MatchOk = {
   ok: true;
-  /** 日本酒の瓶が写っていたか */
+  /** 日本酒の瓶が写っていたか（AI が、はっきり true と答えたときだけ true） */
   bottle: boolean;
   /** ラベルから読み取った文字（合うものが無かったときに、スタッフに見せる） */
   read: { brand: string; subName: string; brewery: string };
   /** 候補（確信度の高い順）。id がリストにあるかは、呼ぶ側で確かめる */
   matches: { id: number; confidence: number }[];
   model: string;
+  /** はじめの形を API が受けつけず、前からの形で聞き直したときの、はじめのエラー（記録に残す。ずっと続くなら、設定を直す） */
+  note?: string;
 };
 export type MatchErr = { ok: false; error: "ai_unavailable" | "ai_refused" | "ai_timeout" | "ai_error"; detail: string };
 export type MatchResult = MatchOk | MatchErr;
@@ -111,14 +115,16 @@ export function parseMatchText(text: string): Omit<MatchOk, "ok" | "model"> | nu
   for (const x of Array.isArray(raw.matches) ? raw.matches.slice(0, 10) : []) {
     if (typeof x !== "object" || x === null) continue;
     const id = Number((x as { id?: unknown }).id);
-    const confidence = Number((x as { confidence?: unknown }).confidence);
-    if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(confidence)) continue;
+    const c = Number((x as { confidence?: unknown }).confidence);
+    if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(c)) continue;
     if (matches.some((m) => m.id === id)) continue;
-    matches.push({ id, confidence: Math.max(0, Math.min(1, confidence)) });
+    // 0〜1 の外（72 のような百分率・負の値）は、意味が分からない＝「迷っている」として扱う（自動では売り切れにしない）
+    matches.push({ id, confidence: c >= 0 && c <= 1 ? c : 0.5 });
   }
   matches.sort((a, b) => b.confidence - a.confidence);
   return {
-    bottle: raw.bottle !== false,
+    // はっきり true と答えたときだけ、瓶が写っているとみなす（答えが無い・false なら、自動では売り切れにしない）
+    bottle: raw.bottle === true,
     read: { brand: String(raw.read?.brand ?? "").slice(0, 60), subName: String(raw.read?.sub_name ?? "").slice(0, 60), brewery: String(raw.read?.brewery ?? "").slice(0, 60) },
     matches: matches.slice(0, 3),
   };
@@ -127,6 +133,19 @@ export function parseMatchText(text: string): Omit<MatchOk, "ok" | "model"> | nu
 type Media = "image/jpeg" | "image/png" | "image/webp";
 const textOf = (content: { type: string }[]) => content.filter((b) => b.type === "text").map((b) => (b as unknown as { text: string }).text).join("");
 const short = (e: unknown) => String(e instanceof Error ? e.message : e).split("\n")[0].slice(0, 150);
+/** 全部でこの時間まで（Vercel の maxDuration 60 秒の内側。DB の読み書きのぶんを残す） */
+const DEADLINE_MS = 45_000;
+/** つながらない・時間切れ・AI の側の失敗（5xx）か＝1 回だけ、やり直してよいもの */
+const transient = (e: unknown) => e instanceof Anthropic.APIConnectionError || e instanceof Anthropic.InternalServerError;
+/** この形そのものを API が受けつけない（モデルを使えない・新しい指定を知らない、など）＝前からの形で聞き直すもの */
+const shapeRejected = (e: unknown) => e instanceof Anthropic.BadRequestError || e instanceof Anthropic.NotFoundError || e instanceof Anthropic.PermissionDeniedError;
+const errOf = (e: unknown): MatchErr => {
+  if (e instanceof Anthropic.APIConnectionTimeoutError) return { ok: false, error: "ai_timeout", detail: "" };
+  if (e instanceof Anthropic.AuthenticationError) return { ok: false, error: "ai_unavailable", detail: "鍵が通らない" };
+  if (e instanceof Anthropic.RateLimitError) return { ok: false, error: "ai_error", detail: "混んでいる（429）" };
+  if (e instanceof Anthropic.APIError) return { ok: false, error: "ai_error", detail: `API ${e.status ?? ""} ${short(e)}` };
+  return { ok: false, error: "ai_error", detail: short(e) };
+};
 
 export async function matchBottle(imageBase64: string, mediaType: Media, list: MatchCandidate[]): Promise<MatchResult> {
   if (!aiAvailable()) return { ok: false, error: "ai_unavailable", detail: "" };
@@ -136,55 +155,58 @@ export async function matchBottle(imageBase64: string, mediaType: Media, list: M
     { type: "image" as const, source: { type: "base64" as const, media_type: mediaType, data: imageBase64 } },
     { type: "text" as const, text: "この写真の日本酒を、在庫リストから選んでください。" },
   ];
-  const opts = { timeout: MATCH_TIMEOUT_MS, maxRetries: 1 };
+  const started = Date.now();
+  const left = () => DEADLINE_MS - (Date.now() - started);
+  // 1 回の問い合わせは、20 秒か、残りの時間の短いほう。SDK の自動のやり直しは使わない（上の頭の説明）
+  const opts = () => ({ timeout: Math.max(1_000, Math.min(MATCH_TIMEOUT_MS, left())), maxRetries: 0 });
 
-  const finish = (stop: string | null, content: { type: string }[], model: string): MatchResult => {
+  const finish = (stop: string | null, content: { type: string }[], model: string, note?: string): MatchResult => {
     // 安全の仕組みで断られたとき（HTTP は 200）。中身を読む前に見る
     if (stop === "refusal") return { ok: false, error: "ai_refused", detail: "" };
     const parsed = parseMatchText(textOf(content));
     if (!parsed) return { ok: false, error: "ai_error", detail: `答えを読めなかった（${stop ?? ""}）` };
-    return { ok: true, ...parsed, model };
+    return { ok: true, ...parsed, model, ...(note ? { note } : {}) };
   };
 
-  try {
-    const res = await client.beta.messages.create(
-      {
-        model: MATCH_MODEL,
-        max_tokens: 8000,
-        // 断られたとき（refusal）は、API の側で、前の世代のモデルに回してもらう
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: [{ model: MATCH_MODEL_PLAIN }],
-        // 急ぐ仕事なので、考える深さは「低」。答えは、決まった形の JSON
-        output_config: { effort: "low", format: { type: "json_schema", schema: MATCH_SCHEMA } },
-        system: [
-          { type: "text", text: SYSTEM },
-          { type: "text", text: listText, cache_control: { type: "ephemeral" } },
-        ],
-        messages: [{ role: "user", content: userContent }],
-      },
-      opts
-    );
-    return finish(res.stop_reason, res.content, res.model);
-  } catch (e) {
-    if (e instanceof Anthropic.APIConnectionTimeoutError) return { ok: false, error: "ai_timeout", detail: "" };
-    if (e instanceof Anthropic.AuthenticationError) return { ok: false, error: "ai_unavailable", detail: "鍵が通らない" };
-    const shapeRejected = e instanceof Anthropic.BadRequestError || e instanceof Anthropic.NotFoundError || e instanceof Anthropic.PermissionDeniedError;
-    if (!shapeRejected) {
-      if (e instanceof Anthropic.RateLimitError) return { ok: false, error: "ai_error", detail: "混んでいる（429）" };
-      if (e instanceof Anthropic.APIError) return { ok: false, error: "ai_error", detail: `API ${e.status ?? ""} ${short(e)}` };
-      return { ok: false, error: "ai_error", detail: short(e) };
-    }
-    // この形を API が受けつけなかった（モデルを使えない・新しい指定を知らない、など）→ ラベル読み取りと同じ、前からの形で、もう一度だけ
+  let rejected: unknown = null;
+  for (let i = 0; i < 2; i++) {
     try {
-      const res = await client.messages.create(
-        { model: MATCH_MODEL_PLAIN, max_tokens: 1500, system: `${SYSTEM}\n\n${listText}`, messages: [{ role: "user", content: userContent }] },
-        opts
+      const res = await client.beta.messages.create(
+        {
+          model: MATCH_MODEL,
+          max_tokens: 8000,
+          // 断られたとき（refusal）は、API の側で、前の世代のモデルに回してもらう
+          betas: ["server-side-fallback-2026-07-01"],
+          fallbacks: [{ model: MATCH_MODEL_PLAIN }],
+          // 急ぐ仕事なので、考える深さは「低」。答えは、決まった形の JSON
+          output_config: { effort: "low", format: { type: "json_schema", schema: MATCH_SCHEMA } },
+          system: [
+            { type: "text", text: SYSTEM },
+            { type: "text", text: listText, cache_control: { type: "ephemeral" } },
+          ],
+          messages: [{ role: "user", content: userContent }],
+        },
+        opts()
       );
       return finish(res.stop_reason, res.content, res.model);
-    } catch (e2) {
-      if (e2 instanceof Anthropic.APIConnectionTimeoutError) return { ok: false, error: "ai_timeout", detail: "" };
-      if (e2 instanceof Anthropic.APIError) return { ok: false, error: "ai_error", detail: `API ${e2.status ?? ""} ${short(e2)}（はじめ: ${short(e)}）` };
-      return { ok: false, error: "ai_error", detail: short(e2) };
+    } catch (e) {
+      if (shapeRejected(e)) { rejected = e; break; }
+      // つながらない・時間切れ・AI の側の失敗は、時間が残っていれば 1 回だけ、やり直す
+      if (i === 0 && transient(e) && left() > 15_000) continue;
+      return errOf(e);
     }
+  }
+  // この形を API が受けつけなかった → ラベル読み取り（ai.ts）と同じ、前からの形で、もう一度だけ。はじめのエラーは、記録に残す
+  if (left() < 5_000) return { ok: false, error: "ai_timeout", detail: "" };
+  const note = `はじめの形を受けつけなかった（${rejected instanceof Anthropic.APIError ? `API ${rejected.status ?? ""} ` : ""}${short(rejected)}）`;
+  try {
+    const res = await client.messages.create(
+      { model: MATCH_MODEL_PLAIN, max_tokens: 1500, system: `${SYSTEM}\n\n${listText}`, messages: [{ role: "user", content: userContent }] },
+      opts()
+    );
+    return finish(res.stop_reason, res.content, res.model, note);
+  } catch (e2) {
+    const r = errOf(e2);
+    return r.error === "ai_error" ? { ...r, detail: `${r.detail}（${note}）`.slice(0, 300) } : r;
   }
 }

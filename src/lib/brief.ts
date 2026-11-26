@@ -82,15 +82,16 @@ async function todaysSoldouts(): Promise<{ ev: SoldoutEvent; key: string }[]> {
     "SELECT payload, created_at FROM audit_logs WHERE action = 'sake.soldout_event' AND created_at >= datetime('now','localtime','-1 day') ORDER BY id"
   );
   // 厨房モニターから売り切れにして、「元に戻す」（まちがえた）をしたものは、完売として報告しない（2026-11-27。lib/kitchen-soldout.ts）。
-  // 戻した時刻より前の売切イベントだけを外す（戻したあとで、本当に売り切れたぶんは、報告する）
+  // 外すのは、KM から売り切れにした時刻（kmAt）から、戻した時刻までの売切イベントだけ
+  // （その前の本当の売り切れ・戻したあとで本当に売り切れたぶんは、報告する）
   const undone = await all<{ payload: string; created_at: string }>(
-    "SELECT payload, created_at FROM audit_logs WHERE action = 'sake.soldout_undone' AND created_at >= datetime('now','localtime','-1 day') ORDER BY id"
+    "SELECT payload, created_at FROM audit_logs WHERE action = 'sake.soldout_undone' AND created_at >= datetime('now','localtime','-2 day') ORDER BY id"
   ).catch(() => []);
-  const undoneAt = new Map<number, string>();
+  const windows: { id: number; from: string; to: string }[] = [];
   for (const u of undone) {
     try {
-      const p = JSON.parse(u.payload) as { id?: number };
-      if (p && p.id) undoneAt.set(Number(p.id), String(u.created_at || ""));
+      const p = JSON.parse(u.payload) as { id?: number; kmAt?: string };
+      if (p && p.id && p.kmAt) windows.push({ id: Number(p.id), from: String(p.kmAt), to: String(u.created_at || "") });
     } catch {}
   }
   const out: { ev: SoldoutEvent; key: string }[] = [];
@@ -98,8 +99,8 @@ async function todaysSoldouts(): Promise<{ ev: SoldoutEvent; key: string }[]> {
     try {
       const p = JSON.parse(r.payload) as SoldoutEvent;
       if (!p || !p.id) continue;
-      const u = undoneAt.get(Number(p.id));
-      if (u && String(r.created_at || "") <= u) continue;
+      const at = String(r.created_at || "");
+      if (windows.some((w) => w.id === Number(p.id) && at >= w.from && at <= w.to)) continue;
       out.push({ ev: p, key: `soldout:${p.id}:${(r.created_at || "").slice(0, 10)}` });
     } catch {}
   }

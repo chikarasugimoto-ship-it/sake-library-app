@@ -70,7 +70,7 @@ function startMock() {
       const next = queue.shift() || { kind: "status", status: 500 };
       if (next.kind === "slow") await sleep(next.ms);
       if (next.kind === "status") {
-        res.writeHead(next.status, { "Content-Type": "application/json" });
+        res.writeHead(next.status, { "Content-Type": "application/json", ...(next.headers || {}) });
         res.end(JSON.stringify({ type: "error", error: { type: next.status === 400 ? "invalid_request_error" : next.status === 401 ? "authentication_error" : "api_error", message: "にせものの AI の、わざとの失敗" } }));
         return;
       }
@@ -296,6 +296,58 @@ const photo = (extra = {}) => post({ op: "photo", image: IMG, media_type: "image
   }
 
   // ============================================================================
+  // 4b. 自動で売り切れにしないとき（2026-11-27 レビューの指摘）
+  // ============================================================================
+  {
+    const n0 = Number((await q("SELECT COUNT(*) AS n FROM kitchen_soldout"))[0].n);
+    // 同じ銘柄の種類ちがいが、きのう売り切れている（空いた瓶が撮られるのは、このころ）
+    await db.execute({ sql: "UPDATE sakes SET status = 'soldout', soldout_at = datetime('now','localtime','-1 days') WHERE id = 103", args: [] });
+    queue.push(answer({ bottle: true, read: { brand: "田酒", sub_name: "", brewery: "" }, matches: [{ id: 102, confidence: 0.93 }, { id: 103, confidence: 0.45 }] }));
+    const s1 = await photo();
+    check("同じ銘柄の種類ちがいが、売り切れずみでも、自動では売り切れにしない（choose。売り切れずみの候補も出す＝KM が「売り切れずみ」と出す）",
+      s1.j.result === "choose" && s1.j.why === "sibling" && s1.j.candidates.map((c) => c.id).join() === "102,103" && s1.j.candidates.find((c) => c.id === 103).status === "soldout" && (await sake(102)).status === "available", s1.j);
+    queue.push(answer({ bottle: true, read: { brand: "田酒", sub_name: "", brewery: "" }, matches: [{ id: 103, confidence: 0.97 }] }));
+    const s1b = await photo();
+    check("売り切れずみのお酒に、はっきり決まっても、同じ銘柄で売り切れでないお酒があれば、候補を出す", s1b.j.result === "choose" && s1b.j.candidates.map((c) => c.id).join() === "103,102" && (await sake(102)).status === "available", s1b.j);
+    await db.execute({ sql: "UPDATE sakes SET status = 'low', soldout_at = '' WHERE id = 103", args: [] });
+    // リストに無い番号に、高い確信度を付けている（AI は迷っている）
+    queue.push(answer({ bottle: true, read: { brand: "新政", sub_name: "", brewery: "" }, matches: [{ id: 104, confidence: 0.92 }, { id: 104004, confidence: 0.91 }] }));
+    const s2 = await photo();
+    check("リストに無い番号に、0.5 より高い確信度を付けていたら（次点がいる）、自動では売り切れにしない", s2.j.result === "choose" && s2.j.why === "unsure" && s2.j.candidates.map((c) => c.id).join() === "104" && (await sake(104)).status === "low", s2.j);
+    queue.push(answer({ bottle: true, read: { brand: "新政", sub_name: "", brewery: "" }, matches: [{ id: 104004, confidence: 0.99 }, { id: 104, confidence: 0.3 }] }));
+    const s2b = await photo();
+    check("いちばん上がリストに無い番号なら、リストの次の候補を、自動では売り切れにしない", s2b.j.result === "choose" && (await sake(104)).status === "low", s2b.j);
+    // 0〜1 の外の確信度
+    queue.push({ kind: "text", text: JSON.stringify({ bottle: true, read: { brand: "飛露喜", sub_name: "", brewery: "" }, matches: [{ id: 109, confidence: 72 }] }) });
+    const s3 = await photo();
+    check("確信度が 0〜1 の外（72 のような百分率）なら、迷っているとみなす（自動では売り切れにしない）", s3.j.result === "choose" && s3.j.why === "unsure" && (await sake(109)).status === "available", s3.j);
+    // 瓶が写っていると言っていない
+    queue.push(answer({ bottle: false, read: { brand: "飛露喜", sub_name: "", brewery: "" }, matches: [{ id: 109, confidence: 0.96 }] }));
+    const s4 = await photo();
+    queue.push({ kind: "text", text: JSON.stringify({ read: { brand: "飛露喜" }, matches: [{ id: 109, confidence: 0.96 }] }) });
+    const s4b = await photo();
+    check("AI が「瓶が写っている」と、はっきり答えていなければ（false・答えが無い）、自動では売り切れにしない", s4.j.result === "choose" && s4b.j.result === "choose" && (await sake(109)).status === "available", [s4.j, s4b.j]);
+    // 銘柄の書き方のちがい・同じ蔵元
+    await ins(114, "【限定】而今", "純米 千本錦");
+    await ins(115, "亜麻猫", "スパーク", { brewery: "新政酒造株式会社" });
+    await ins(116, "作 雅乃智", "純米吟醸");
+    await ins(117, "黒竜", "純米吟醸", { brewery: "黒龍酒造" });
+    await ins(118, "黒龍", "大吟醸", { brewery: "黒龍酒造" });
+    const fam = async (id, others) => {
+      queue.push(answer({ bottle: true, read: { brand: "", sub_name: "", brewery: "" }, matches: [{ id, confidence: 0.97 }] }));
+      const r = await photo();
+      return r.j.result === "choose" && r.j.why === "sibling" && others.every((o) => r.j.candidates.some((c) => c.id === o)) && (await sake(id)).status !== "soldout" ? "" : JSON.stringify(r.j).slice(0, 200);
+    };
+    const f1 = await fam(101, [114]);
+    const f2 = await fam(104, [115]);
+    const f3 = await fam(110, [116]);
+    const f4 = await fam(118, [117]);
+    check("かっこ書き（【限定】而今と而今）・同じ蔵元（新政と亜麻猫・黒龍と黒竜）・頭の語が同じ（作と作 雅乃智）も、同じ銘柄として扱う（自動では売り切れにしない）", !f1 && !f2 && !f3 && !f4, [f1, f2, f3, f4]);
+    await db.execute({ sql: "UPDATE sakes SET archived = 1 WHERE id IN (114, 115, 116, 117, 118)", args: [] });
+    check("ここまで、控えは 1 行も増えていない", Number((await q("SELECT COUNT(*) AS n FROM kitchen_soldout"))[0].n) === n0);
+  }
+
+  // ============================================================================
   // 5. AI が、うまく答えないとき
   // ============================================================================
   {
@@ -313,6 +365,14 @@ const photo = (extra = {}) => post({ op: "photo", image: IMG, media_type: "image
     queue.push({ kind: "status", status: 400 }); queue.push({ kind: "status", status: 400 });
     const bad2 = await photo();
     check("それも受けつけなければ、何もしない（502 ai_error）", bad2.status === 502 && bad2.j.error === "ai_error" && (await sake(109)).status === "available", bad2.j);
+    const lastPhoto = (await audits("kitchen.photo")).map((x) => JSON.parse(x.payload)).filter((x) => x.result === "applied" && x.model === "claude-opus-4-8").pop();
+    check("前からの形で聞き直して売り切れにしたときは、はじめのエラー（API 400）を記録に残す（ずっと続くなら、設定を直せるように）", !!lastPhoto && /はじめの形を受けつけなかった（API 400/.test(String(lastPhoto.note || "")), lastPhoto);
+    // 混んでいる（429。retry-after 45 秒）→ 待たずに返す
+    const n429 = aiCalls.length;
+    queue.push({ kind: "status", status: 429, headers: { "retry-after": "45" } });
+    const t429 = Date.now();
+    const busy429 = await photo();
+    check("AI が混んでいる（429・retry-after 45 秒）ときは、待たずに、やり直さずに返す（502 ai_error。Vercel の 60 秒を超えない）", busy429.status === 502 && busy429.j.error === "ai_error" && Date.now() - t429 < 10_000 && aiCalls.length === n429 + 1, [busy429.j, Date.now() - t429, aiCalls.length - n429]);
     // 断られた
     queue.push({ kind: "refusal" });
     const ref = await photo();
@@ -386,6 +446,34 @@ const photo = (extra = {}) => post({ op: "photo", image: IMG, media_type: "image
     const k5 = await post({ op: "soldout", sakeId: 109 });
     const [u1, u2] = await Promise.all([post({ op: "restore", logId: k5.j.logId }), post({ op: "restore", logId: k5.j.logId })]);
     check("2 台が同時に「元に戻す」を押しても、戻すのは 1 回。もう片方には「もう戻してある」と返す（「状態が変わった」とは言わない）", [u1.j.result || u1.j.error, u2.j.result || u2.j.error].sort().join() === "already_restored,restored" && (await sake(109)).status === "available", [u1.j, u2.j]);
+    // 在庫ボードで、削除 → 復元 → 売切（売切日は、古いまま残る）
+    const k6 = await post({ op: "soldout", sakeId: 102 });
+    await db.execute({ sql: "UPDATE sakes SET archived = 1, updated_at = datetime('now','localtime','+1 seconds') WHERE id = 102", args: [] });
+    await db.execute({ sql: "UPDATE sakes SET archived = 0, status = 'available', updated_at = datetime('now','localtime','+2 seconds') WHERE id = 102", args: [] });
+    await db.execute({ sql: "UPDATE sakes SET status = 'soldout', updated_at = datetime('now','localtime','+3 seconds') WHERE id = 102", args: [] });
+    const u6 = await post({ op: "restore", logId: k6.j.logId });
+    check("KM から売り切れにしたあとで、在庫ボードで削除→復元→売切をしたお酒は、元に戻さない（409 changed。売切日が古いまま同じでも、更新日時で分かる）。「元に戻す」の所にも出ない",
+      u6.status === 409 && u6.j.error === "changed" && (await sake(102)).status === "soldout" && !(await call(URLK)).j.recent.some((x) => x.sake.id === 102), u6.j);
+    await db.execute({ sql: "UPDATE sakes SET status = 'available', soldout_at = '' WHERE id = 102", args: [] });
+    // 売り切れにしたあとで、注文（遅れて届いた）が残数を 0 にした
+    const k7 = await post({ op: "soldout", sakeId: 104 });
+    await db.execute({ sql: "UPDATE sakes SET stock_count = 0 WHERE id = 104", args: [] });
+    const listed7 = (await call(URLK)).j.recent.some((x) => x.sake.id === 104);
+    const u7 = await post({ op: "restore", logId: k7.j.logId });
+    check("売り切れにしたあとで残数が 0 になったお酒は、「元に戻す」の所に出さない・戻さない（409 changed）", !listed7 && u7.status === 409 && u7.j.error === "changed" && (await sake(104)).status === "soldout", [listed7, u7.j]);
+    await db.execute({ sql: "UPDATE sakes SET status = 'low', soldout_at = '', stock_count = 3, opened_at = '2026-11-25 19:30:00' WHERE id = 104", args: [] });
+    // 夜の日報: その前の本当の売り切れは、報告する（ここまでの売切イベントを消してから、1 本だけで確かめる）
+    await db.execute("DELETE FROM audit_logs WHERE action IN ('sake.soldout_event', 'sake.soldout_undone')");
+    await ins(119, "鳳凰美田", "剱 辛口純米", { brewery: "小林酒造" });
+    await db.execute({ sql: "INSERT INTO audit_logs (store_id, action, payload, created_at) VALUES (1, 'sake.soldout_event', ?, datetime('now','localtime','-3 hours'))", args: [JSON.stringify({ id: 119, name: "鳳凰美田 剱", days: 5, cups: 18, deliveredAt: "", bottleSize: "1.8L" })] });
+    const k8 = await post({ op: "soldout", sakeId: 119 });
+    const brMid = await call(`/api/cron/daily-brief?dry=1&token=${CRON}`);
+    const u8 = await post({ op: "restore", logId: k8.j.logId });
+    const br = await call(`/api/cron/daily-brief?dry=1&token=${CRON}`);
+    const houou = (String(br.j.text || "").match(/鳳凰美田/g) || []).length;
+    check("夜の日報: KM のまちがいを元に戻しても、その前の本当の売り切れ（3 時間前）は「本日の完売」に残す（外すのは、KM で売り切れにしてから戻すまでのぶんだけ）",
+      brMid.j.sections.soldout === 2 && u8.j.result === "restored" && br.j.sections.soldout === 1 && houou === 1, [brMid.j.sections, u8.j, br.j.sections, houou]);
+    await db.execute({ sql: "UPDATE sakes SET archived = 1 WHERE id = 119", args: [] });
     // 残数つきのお酒
     const k4 = await post({ op: "soldout", sakeId: 104 });
     const s104 = await sake(104);

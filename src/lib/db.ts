@@ -103,6 +103,7 @@ const SCHEMA = [
     prev_status TEXT NOT NULL DEFAULT 'available',
     prev_opened_at TEXT NOT NULL DEFAULT '',
     sold_at TEXT NOT NULL DEFAULT '',
+    sold_updated_at TEXT NOT NULL DEFAULT '',
     detail TEXT NOT NULL DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime')),
     undone_at TEXT NOT NULL DEFAULT ''
@@ -144,6 +145,8 @@ const MIGRATIONS = [
   // ===== 1合・熱燗対応（2026-08-16）=====
   // 熱燗可フラグ（銘柄ごと・在庫ボードでトグル）。1=熱燗OK（1合徳利のみ）。既定0=熱燗不可
   "ALTER TABLE sakes ADD COLUMN kan_ok INTEGER DEFAULT 0",
+  // 厨房モニターからの売り切れの控えに、売り切れにしたときのお酒の更新日時（2026-11-27。前の形の表がある DB のため）
+  "ALTER TABLE kitchen_soldout ADD COLUMN sold_updated_at TEXT NOT NULL DEFAULT ''",
 ];
 
 async function init() {
